@@ -1,0 +1,240 @@
+package com.msz.resume.ai.resume.tooling;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.msz.resume.ai.resume.dto.ResumeToolResult;
+import com.msz.resume.ai.resume.dto.ResumeVO;
+import com.msz.resume.ai.tool.CoreTool;
+import dev.langchain4j.agent.tool.Tool;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+
+/**
+ * 简历生成指南工具（延迟工具）
+ *
+ * <p>返回简历生成指南、JSON 模板和示例，帮助主 LLM 生成结构化简历。
+ *
+ * <h2>设计说明</h2>
+ * <ul>
+ *   <li>工具只返回静态指南，不调用 LLM</li>
+ *   <li>主 LLM 根据指南自己生成简历内容</li>
+ *   <li>节省 token，保持主 LLM 控制权</li>
+ * </ul>
+ *
+ * <h2>使用场景</h2>
+ * <p>当用户说"帮我创建简历"、"帮我生成一份简历"时，主 LLM 调用此工具获取生成指南。
+ */
+@Slf4j
+@CoreTool
+@Component
+public class ResumeGuideTool {
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    /**
+     * 获取简历生成指南
+     *
+     * <p>返回包含以下内容的指南：
+     * <ul>
+     *   <li>instruction - 详细的生成指南和润色原则</li>
+     *   <li>template - 空的 JSON 模板</li>
+     *   <li>example - 填充好的示例简历</li>
+     * </ul>
+     *
+     * @return JSON 格式的生成指南
+     */
+    @Tool("获取简历生成指南。当用户需要创建、重写、生成简历，或要求放到工作台/预览/导出前先生成结构化简历时调用。若当前对话和上传内容已足够生成简历，拿到指南后应尽快调用 publishArtifact 生成 resume artifact，不要先输出大段纯文本简历草稿，除非用户明确要求纯文本版本。")
+    public String getResumeGuide() {
+        log.info("[ResumeGuideTool] 返回简历生成指南");
+
+        ResumeToolResult result = ResumeToolResult.ofResumeGuide(
+                INSTRUCTION,
+                createTemplate(),
+                createExample()
+        );
+
+        return toJson(result);
+    }
+
+    // ==================== 生成指南内容 ====================
+
+    /**
+     * 简历生成指南说明
+     */
+    private static final String INSTRUCTION = """
+            ## 简历生成指南
+
+            你是一位专业的简历撰写专家，请根据用户提供的信息生成结构化简历。
+
+            ### 交互边界（必须遵守）
+            - 如果当前对话里已经有足够的简历信息，默认流程应是：整理信息 → 生成结构化 resume → 立即调用 publishArtifact，把简历放到工作台。
+            - 用户提到“生成简历到工作台”“放到工作台”“生成预览”“我来导出/下载”时，优先目标是工作台 artifact，不是先写一大段正文。
+            - 除非用户明确要求“先给我纯文本版本/先重写成正文”，否则不要先输出整份长篇简历草稿再等待用户二次要求工作台。
+            - 生成简历时，优先调用 publishArtifact，并传入结构化参数：type="resume"，resume={...}。不要把整份 JSON 再包进字符串参数。
+            - 如果当前无法调用 publishArtifact，最终只输出结构化 JSON：{"type":"resume","resume":{...}}，不要在 JSON 前后添加说明文字。
+            - 最终 JSON 必须严格合法：不要包裹 Markdown 代码块，不要写注释，不要输出伪 JSON。
+            - 字符串内部如需出现英文双引号，必须转义为 \\"，或改用中文引号“”。例如不要写 "实现"思考-行动"闭环"，应写 "实现\\"思考-行动\\"闭环" 或 "实现“思考-行动”闭环"。
+            - 生成简历后不要主动询问“是否导出/是否下载/是否确认”。前端会自动提供预览和下载入口。
+            - 导出不是删除、支付、覆盖数据等敏感操作，不需要二次确认。
+            - publishArtifact 只负责把简历产物放到工作台，不负责 PDF 导出。PDF 下载由前端工作台内置按钮直接处理。
+            - 发布到工作台后，如需补充说明，只说极简的一句结果摘要即可；不要在 artifact 之前为了“解释”先输出长篇正文。
+            - 如果手机号、邮箱、日期等信息缺失，可以留空或使用用户已允许的占位值，不要为了导出连续追问。
+
+            ### 润色原则
+            1. **工作描述**：使用动词开头（负责、主导、参与、设计、实现、优化、搭建、重构）
+            2. **量化成果**：尽量用数据说话（提升 xx%、处理 xx 量级、节省 xx 成本、服务 xx 用户）
+            3. **突出亮点**：强调技术难点、业务价值、团队贡献
+            4. **简洁明了**：每个工作经历下 3-5 个要点，每个要点 1-2 行
+
+            ### 个人总结
+            - 50-100 字
+            - 突出核心技能和经验亮点
+            - 与求职岗位匹配
+
+            ### 技能列表
+            - 技能名称 + 掌握程度（精通/熟练/熟悉/了解）
+            - 按重要程度排序
+            - 与岗位要求匹配
+
+            ### 输出格式
+            必须输出 JSON 格式，结构参考 template 字段。
+            最外层固定为 {"type":"resume","resume":{...}}。
+            字段命名使用驼峰式（camelCase）。
+            优先通过 publishArtifact 发布这个结构化对象；无法调用 publishArtifact 时，最终回答只能是这个 JSON 对象本身，不要加 Markdown fence 或解释文字。
+
+            ### 注意事项
+            - 不要编造用户没有的经历
+            - 如果信息不完整，合理推断或留空
+            - 日期格式统一为 "YYYY.MM" 或 "YYYY年MM月"
+            - 工作描述多个要点用换行符分隔
+            """;
+
+    /**
+     * 创建空的简历模板
+     */
+    private ResumeVO createTemplate() {
+        return ResumeVO.builder()
+                .basicInfo(ResumeVO.BasicInfo.builder()
+                        .name("")
+                        .phone("")
+                        .email("")
+                        .location("")
+                        .position("")
+                        .experience("")
+                        .build())
+                .summary("")
+                .educationList(List.of(
+                        ResumeVO.Education.builder()
+                                .school("")
+                                .major("")
+                                .degree("")
+                                .startDate("")
+                                .endDate("")
+                                .description("")
+                                .build()
+                ))
+                .workList(List.of(
+                        ResumeVO.WorkExperience.builder()
+                                .company("")
+                                .position("")
+                                .startDate("")
+                                .endDate("")
+                                .description("")
+                                .build()
+                ))
+                .projectList(List.of(
+                        ResumeVO.Project.builder()
+                                .name("")
+                                .role("")
+                                .startDate("")
+                                .endDate("")
+                                .description("")
+                                .build()
+                ))
+                .skillList(List.of(
+                        ResumeVO.Skill.builder()
+                                .name("")
+                                .level("")
+                                .build()
+                ))
+                .build();
+    }
+
+    /**
+     * 创建示例简历
+     */
+    private ResumeVO createExample() {
+        return ResumeVO.builder()
+                .basicInfo(ResumeVO.BasicInfo.builder()
+                        .name("张三")
+                        .phone("13812345678")
+                        .email("zhangsan@example.com")
+                        .location("北京")
+                        .position("Java后端开发工程师")
+                        .experience("5年")
+                        .build())
+                .summary("5年Java后端开发经验，擅长高并发系统设计与分布式架构。曾主导日均请求量超10亿的核心系统开发，对性能优化、稳定性保障有丰富经验。")
+                .educationList(List.of(
+                        ResumeVO.Education.builder()
+                                .school("北京大学")
+                                .major("计算机科学与技术")
+                                .degree("本科")
+                                .startDate("2015.09")
+                                .endDate("2019.06")
+                                .description("主修课程：数据结构、算法、操作系统、计算机网络")
+                                .build()
+                ))
+                .workList(List.of(
+                        ResumeVO.WorkExperience.builder()
+                                .company("阿里云")
+                                .position("后端开发工程师")
+                                .startDate("2022.03")
+                                .endDate("至今")
+                                .description("""
+                                        负责云存储服务核心模块开发，日均请求量10亿+
+                                        设计并实现分布式锁服务，提升系统稳定性30%
+                                        优化存储引擎，降低延迟20%，节省成本500万/年""")
+                                .build(),
+                        ResumeVO.WorkExperience.builder()
+                                .company("字节跳动")
+                                .position("后端开发工程师")
+                                .startDate("2019.07")
+                                .endDate("2022.02")
+                                .description("""
+                                        参与抖音推荐系统开发，优化召回策略提升用户留存
+                                        设计实时特征计算服务，支持百万级QPS""")
+                                .build()
+                ))
+                .projectList(List.of(
+                        ResumeVO.Project.builder()
+                                .name("云存储服务重构")
+                                .role("核心开发")
+                                .startDate("2022.06")
+                                .endDate("2023.03")
+                                .description("主导存储服务架构升级，引入分层存储策略，降低存储成本40%")
+                                .build()
+                ))
+                .skillList(List.of(
+                        ResumeVO.Skill.builder().name("Java").level("精通").build(),
+                        ResumeVO.Skill.builder().name("Spring Boot").level("精通").build(),
+                        ResumeVO.Skill.builder().name("MySQL").level("熟练").build(),
+                        ResumeVO.Skill.builder().name("Redis").level("熟练").build(),
+                        ResumeVO.Skill.builder().name("Kafka").level("熟悉").build(),
+                        ResumeVO.Skill.builder().name("Docker").level("熟悉").build()
+                ))
+                .build();
+    }
+
+    // ==================== 工具方法 ====================
+
+    private String toJson(Object obj) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(obj);
+        } catch (JsonProcessingException e) {
+            log.error("[ResumeGuideTool] JSON序列化失败", e);
+            return toJson(ResumeToolResult.ofError("生成指南序列化失败"));
+        }
+    }
+}

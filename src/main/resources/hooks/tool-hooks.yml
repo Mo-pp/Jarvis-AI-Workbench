@@ -1,0 +1,39 @@
+# Hook 配置文件
+#
+# 在工具执行前后提供拦截点，替代 ExecuteToolNode 中的硬编码 if-else。
+# YAML 格式说明：
+#   - pre_tool_use: 工具执行前的拦截规则列表
+#   - post_tool_use: 工具执行后的拦截规则列表
+#   - 每条规则包含:
+#       name:     规则名称（唯一标识，用于日志）
+#       matcher:  正则表达式，匹配工具名（如 "askUserQuestion|askMultipleQuestions"）
+#       action:  动作类型，对应 Spring Bean 名称（如 "askUserQuestionHook"、"auditLogHook"）
+#       priority: 执行优先级，数字越小越先执行（default: 100）
+#
+# 修改此文件后，调用 /api/claude/debug/hooks/reload 可热加载，无需重启应用。
+
+pre_tool_use:
+  # 子Agent模式阻断：拦截 askUserQuestion / askMultipleQuestions / spawnAgent
+  - name: sub_agent_block
+    matcher: "^(askUserQuestion|askMultipleQuestions|spawnAgent)$"
+    action: subAgentBlockHook
+    priority: 10
+
+  # AskUserQuestion 拦截：挂起会话等待用户输入
+  - name: ask_user_question
+    matcher: "^(askUserQuestion|askMultipleQuestions)$"
+    action: askUserQuestionHook
+    priority: 20
+
+  # spawnAgent 拦截：派发任务给子Agent
+  - name: spawn_agent
+    matcher: "^spawnAgent$"
+    action: delegateTaskHook
+    priority: 30
+
+post_tool_use:
+  # 审计日志：记录所有工具调用
+  # - name: audit_log
+  #   matcher: ".*"
+  #   action: auditLogHook
+  #   priority: 100

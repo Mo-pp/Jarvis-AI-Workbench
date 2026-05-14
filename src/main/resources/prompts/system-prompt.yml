@@ -1,0 +1,43 @@
+# 系统提示词主配置
+# 说明：定义各个 section 的开关和全局配置
+# 最后更新：2026-04-16
+
+version: 1.0
+
+# 静态 Section 配置（可缓存）
+static_sections:
+  intro:
+    enabled: true
+    file: "sections/intro.yml"
+  tone_and_style:
+    enabled: true
+    file: "sections/tone-and-style.yml"
+  output_efficiency:
+    enabled: true
+    file: "sections/output-efficiency.yml"
+  using_your_tools:
+    enabled: true
+    file: "sections/using-your-tools.yml"
+    # 注意：此 section 会动态追加工具 prompt
+
+# 动态 Section 配置（每轮重新计算）
+dynamic_sections:
+  session_guidance:
+    enabled: true
+  env_info:
+    enabled: true
+  user_context:
+    enabled: true
+  user_preferences:
+    enabled: true
+  memory:
+    enabled: false  # 预留，暂不启用
+  sub_agent_context:
+    enabled: true
+    file: "sections/sub-agent-context.yml"
+
+# 全局配置
+config:
+  # model_name 已移除 - 改为从 LLMConfig 动态读取实际使用的模型名称
+  knowledge_cutoff: "2026-04"
+  separator: "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"

@@ -1,0 +1,37 @@
+# Build output
+target/
+*.class
+*.jar
+
+# Logs
+logs/
+*.log
+
+# Local configuration and secrets
+src/main/resources/application-local.yml
+src/main/resources/application-dev.yml
+docs/
+.env
+.env.*
+!.env.example
+jarvis-frontend/.env
+jarvis-frontend/.env.*
+!jarvis-frontend/.env.example
+
+# Frontend dependencies and build output
+node_modules/
+jarvis-frontend/node_modules/
+jarvis-frontend/dist/
+jarvis-frontend/dist-ssr/
+
+# IDE and agent-local state
+.idea/
+.vscode/
+.claude/
+.codex/
+.trae/
+.mcp.json
+
+# OS files
+.DS_Store
+Thumbs.db

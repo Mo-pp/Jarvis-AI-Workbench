@@ -1,0 +1,202 @@
+spring:
+  application:
+    name: jarvis
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+  servlet:
+    multipart:
+      max-file-size: 250MB
+      max-request-size: 300MB
+  # MySQL 数据源配置
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3306/ai_resume?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  # Flyway 数据库迁移配置
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    repair-on-migrate: true  # 修复校验和不匹配问题
+  # Redis 配置（用于 AskUserQuestion 挂起会话存储）
+  data:
+    redis:
+      host: ${SPRING_DATA_REDIS_HOST:localhost}
+      port: ${SPRING_DATA_REDIS_PORT:6379}
+      password: ${SPRING_DATA_REDIS_PASSWORD:}
+      database: ${SPRING_DATA_REDIS_DATABASE:0}
+      timeout: 10000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+  # Security 配置
+  security:
+    key: ${JARVIS_SECURITY_KEY:change-me-before-public-deployment-change-me}
+    expire: ${JARVIS_SECURITY_EXPIRE_HOURS:168}  # Token 有效期（小时），7天
+  # 邮件配置
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    protocol: ${MAIL_PROTOCOL:smtps}
+    properties:
+      mail:
+        smtp:
+          ssl:
+            enable: true
+          auth: true
+    # 验证码发送间隔（秒）
+    code-interval: 60
+
+server:
+  port: ${SERVER_PORT:8084}
+  servlet:
+    context-path: /
+
+# JARVIS LLM 配置
+jarvis:
+  llm:
+    # 当前使用的模型提供商：zhipu（智谱）、dashscope（通义千问）、gpt（OpenAI Responses 兼容）或 qianfan-coding-plan（千帆 Coding Plan）
+    provider: ${JARVIS_LLM_PROVIDER:gpt}
+    # 智谱 AI 配置
+    zhipu:
+      api-key: ${BIGMODEL_API_KEY:}
+      model: glm-4.7  # glm-4.7 支持推理(thinking)模式
+      base-url: https://open.bigmodel.cn/api/paas/v4/
+      timeout: 60
+      temperature: 0.2
+      max-tokens: 4096
+    # 通义千问配置（备用）
+    dashscope:
+      model: qwen-max
+    # GPT 配置（OpenAI Responses API 兼容）
+    gpt:
+      api-key: ${OPENAI_API_KEY:}
+      model: ${OPENAI_MODEL:gpt-5.4-mini}
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      wire-api: ${OPENAI_WIRE_API:chat}
+      timeout: ${OPENAI_TIMEOUT:120}
+    # 千帆 Coding Plan 配置（OpenAI Chat Completions 兼容）
+    qianfan-coding-plan:
+      api-key: ${QIANFAN_OPENAI_API_KEY:}
+      model: qianfan-code-latest
+      base-url: https://qianfan.baidubce.com/v2/coding
+      wire-api: chat
+      timeout: 120
+  mcp:
+    enabled: ${JARVIS_MCP_ENABLED:true}
+    fail-fast: ${JARVIS_MCP_FAIL_FAST:false}
+    servers:
+      - key: bigmodel-web-search
+        enabled: ${JARVIS_MCP_BIGMODEL_WEB_SEARCH_ENABLED:true}
+        transport: sse-http
+        url: ${JARVIS_MCP_BIGMODEL_WEB_SEARCH_URL:https://open.bigmodel.cn/api/mcp/web_search/sse?Authorization=${BIGMODEL_API_KEY:}}
+        tool-prefix: mcp_bigmodel_web_search_
+        exposure: deferred
+        timeout: 60s
+        initialization-timeout: 30s
+        tool-execution-timeout: 60s
+        log-requests: false
+        log-responses: false
+        cache-tool-list: true
+        resources:
+          enabled: true
+          exposure: deferred
+          max-text-chars: 20000
+          max-blob-chars: 2000
+  compression:
+    model-context-window: 1000000
+  autocompact:
+    context-window: 1000000
+    reserved-output-tokens: 100000
+    threshold-offset: 0
+  open-viking:
+    base-url: ${OPENVIKING_BASE_URL:}
+    api-key: ${OPENVIKING_API_KEY:}
+    timeout: ${OPENVIKING_TIMEOUT:150s}
+    default-limit: ${OPENVIKING_DEFAULT_LIMIT:5}
+    max-limit: ${OPENVIKING_MAX_LIMIT:8}
+    max-result-chars: ${OPENVIKING_MAX_RESULT_CHARS:10000}
+    account: ${OPENVIKING_ACCOUNT:jarvis}
+    user: ${OPENVIKING_USER:u-demo-001}
+    agent: ${OPENVIKING_AGENT:jarvis}
+    # OpenViking Session 集成配置（主对话记忆链路）
+    session:
+      enabled: ${OPENVIKING_SESSION_ENABLED:false}  # 主开关，默认禁用，需要显式启用
+      append-user: true
+      append-assistant: true
+      context-on-compact: true
+      manual-commit: true
+      context-token-budget: 4000
+    recall:
+      enabled: ${OPENVIKING_RECALL_ENABLED:false}
+      retrieval-enabled: ${OPENVIKING_RECALL_RETRIEVAL_ENABLED:false}
+      memory-scope-enabled: ${OPENVIKING_RECALL_MEMORY_SCOPE_ENABLED:false}
+      resource-scope-enabled: ${OPENVIKING_RECALL_RESOURCE_SCOPE_ENABLED:false}
+      skill-scope-enabled: ${OPENVIKING_RECALL_SKILL_SCOPE_ENABLED:false}
+      resource-root-uri: viking://resources/
+      memory-root-uri-template: viking://user/{userId}/memories/
+      skill-root-uri-template: viking://agent/{agentId}/skills/
+      resource-limit: 3
+      memory-limit: 3
+      skill-limit: 3
+      high-relevance-threshold: 0.75
+      medium-relevance-threshold: 0.55
+      max-injected-candidates: 3
+      max-injected-chars: 4000
+      max-abstract-chars: 900
+      overview-read-enabled: true
+      max-overview-chars: 2200
+  resource:
+    # 资源库配置
+    max-text-content-bytes: ${RESOURCE_MAX_TEXT_CONTENT:5242880}  # 5MB
+    max-file-size-bytes: ${RESOURCE_MAX_FILE_SIZE:262144000}      # 250MB
+    max-preview-chars: ${RESOURCE_MAX_PREVIEW_CHARS:100000}        # 100KB 字符
+    max-filename-length: 200
+  trace:
+    stream:
+      enabled: ${JARVIS_TRACE_STREAM_ENABLED:true}
+      consumer-enabled: ${JARVIS_TRACE_STREAM_CONSUMER_ENABLED:true}
+      stream-key: ${JARVIS_TRACE_STREAM_KEY:jarvis:trace:stream}
+      group: ${JARVIS_TRACE_STREAM_GROUP:trace-db-writer}
+      consumer-name: ${JARVIS_TRACE_STREAM_CONSUMER:${spring.application.name:jarvis}}
+      batch-size: ${JARVIS_TRACE_STREAM_BATCH_SIZE:50}
+      block-timeout-ms: ${JARVIS_TRACE_STREAM_BLOCK_TIMEOUT_MS:1000}
+      poll-interval-ms: ${JARVIS_TRACE_STREAM_POLL_INTERVAL_MS:1000}
+      pending-retry-ms: ${JARVIS_TRACE_STREAM_PENDING_RETRY_MS:30000}
+      pending-recovery-batch-size: ${JARVIS_TRACE_STREAM_PENDING_RECOVERY_BATCH_SIZE:20}
+      claim-idle-ms: ${JARVIS_TRACE_STREAM_CLAIM_IDLE_MS:30000}
+      max-delivery-count: ${JARVIS_TRACE_STREAM_MAX_DELIVERY_COUNT:5}
+      dead-letter-enabled: ${JARVIS_TRACE_STREAM_DEAD_LETTER_ENABLED:true}
+      dead-letter-stream-key: ${JARVIS_TRACE_STREAM_DEAD_LETTER_STREAM_KEY:jarvis:trace:stream:dead-letter}
+      max-len: ${JARVIS_TRACE_STREAM_MAX_LEN:10000}
+      approximate-trim: ${JARVIS_TRACE_STREAM_APPROXIMATE_TRIM:true}
+
+# LangChain4j 通义千问配置（备用）
+langchain4j:
+  community:
+    dashscope:
+      chat-model:
+        model-name: qwen-max                    # 通义千问模型：qwen-plus（性价比高）或 qwen-max（效果更好）
+        api-key: ${DASHSCOPE_API_KEY:}           # 从环境变量读取，或直接填写
+      # streaming-chat-model 由 LLMConfig 根据 provider 条件创建，避免多 bean 冲突
+      # 当 provider=dashscope 时，LLMConfig 会创建 dashscopeStreamingChatModel
+      embedding-model:
+        model-name: text-embedding-v3
+        api-key: ${DASHSCOPE_API_KEY:}
+
+# 新增：日志配置
+logging:
+  level:
+    root: INFO
+    com.msz.resume.ai: DEBUG          # 项目代码详细日志
+    org.bsc.langgraph4j: INFO         # LangGraph4j 日志（降低级别）
+    dev.langchain4j: INFO             # LangChain4j 日志（降低级别，避免HTTP请求体过长）
+    dev.langchain4j.http.client.log: ${LANGCHAIN4J_HTTP_LOG_LEVEL:WARN}  # 临时抓 LangChain4j HTTP 请求体时设为 INFO
+    org.flywaydb: INFO                # Flyway迁移日志
+  pattern:
+    console: "%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"
