@@ -19,7 +19,7 @@ spring:
     locations: classpath:db/migration
     baseline-on-migrate: true
     repair-on-migrate: true  # 修复校验和不匹配问题
-  # Redis 配置（用于 AskUserQuestion 挂起会话存储）
+  # Redis 配置
   data:
     redis:
       host: ${SPRING_DATA_REDIS_HOST:localhost}
