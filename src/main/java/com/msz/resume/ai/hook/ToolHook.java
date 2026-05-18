@@ -8,16 +8,16 @@ package com.msz.resume.ai.hook;
  *
  * <h2>命名约定</h2>
  * Bean 名称应与 YAML 配置中的 {@code action} 字段一致。
- * 例如 {@code action: askUserQuestionHook} → Bean 名称为 {@code "askUserQuestionHook"}。
+ * 例如 {@code action: subAgentBlockHook} → Bean 名称为 {@code "subAgentBlockHook"}。
  *
  * <h2>实现示例</h2>
  * <pre>
- * &#64;Component("askUserQuestionHook")
- * public class AskUserQuestionHook implements ToolHook {
+ * &#64;Component("subAgentBlockHook")
+ * public class SubAgentBlockHook implements ToolHook {
  *     &#64;Override
  *     public HookResult preToolUse(HookContext context) {
  *         // 拦截逻辑...
- *         return HookResult.block("此工具需要等待用户输入");
+ *         return HookResult.block("子 Agent 不允许调用此工具");
  *     }
  *
  *     &#64;Override

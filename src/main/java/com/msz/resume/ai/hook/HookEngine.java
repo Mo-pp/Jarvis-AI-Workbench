@@ -20,18 +20,15 @@ import java.util.regex.Pattern;
  *   <li>按 priority 升序链式执行匹配到的 Hook</li>
  *   <li>遇到 {@link HookResult#block(String)} 立即终止链，返回阻断结果</li>
  *   <li>遇到 {@link HookResult#modifyArgs(Map)} 将修改后的参数传递给下一个 Hook</li>
- *   <li>遇到 pending 结果立即终止链，状态机挂起等待用户确认</li>
  * </ol>
  *
  * <h2>执行流程</h2>
  * <pre>
  * preToolUse("askUserQuestion", args, state)
- *   → 匹配规则: [subAgentBlockHook(priority=10), askUserQuestionHook(priority=20)]
+ *   → 匹配规则: [subAgentBlockHook(priority=10)]
  *   → 执行 subAgentBlockHook.preToolUse(ctx)
  *     → 如果 isSubAgent: 返回 block("子Agent不可向用户提问") → 终止链，返回 block
- *     → 如果非子Agent: 返回 continueResult() → 继续下一个
- *   → 执行 askUserQuestionHook.preToolUse(ctx)
- *     → 返回 block("需要等待用户输入") → 终止链，返回 block
+ *     → 如果非子Agent: 返回 continueResult()
  * </pre>
  *
  * <h2>Hook Bean 查找</h2>
@@ -77,12 +74,6 @@ public class HookEngine implements HookService {
                 }
 
                 HookResult result = matched.hook.preToolUse(effectiveContext);
-
-                if (result.pendingId() != null) {
-                    log.info("[HookEngine] preToolUse 挂起: tool={}, hook={}, pendingId={}",
-                            context.toolName(), matched.rule.name(), result.pendingId());
-                    return result;
-                }
 
                 if (result.isBlocked()) {
                     log.info("[HookEngine] preToolUse 阻断: tool={}, hook={}, reason={}",

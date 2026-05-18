@@ -54,7 +54,6 @@ JARVIS 是一个会自动思考并调用工具的智能 AI 助手，基于 **Spr
   - `GET /chat/stream`：流式对话入口
   - `GET /session/{sessionId}/history`：会话历史
   - `GET /sessions`：会话列表
-- `AnswerController`：`POST /api/claude/chat/answer`，用于恢复 AskUserQuestion 挂起会话
 - `DebugController`：`/api/debug/**`，提供 prompt、hook、OpenViking、compression 等调试接口
 - `AuthController`：`/api/auth/**`，用户认证接口（注册、登录、邮箱验证、密码重置）
 
@@ -100,15 +99,14 @@ JARVIS 是一个会自动思考并调用工具的智能 AI 助手，基于 **Spr
 
 配置前缀：`jarvis.compression.*`（L1/L3）、`jarvis.autocompact.*`（L5）、`jarvis.caching.*`（缓存追踪）。
 
-### AskUserQuestion 异步阻塞-恢复
+### AskUserQuestion 问卷 artifact
 
-LLM 可通过 `AskUserQuestionTool` 向用户提问，实现为**阻塞-恢复模式**：
+LLM 可通过 `AskUserQuestionTool` 向用户提问，当前实现为**前端 questionnaire artifact 模式**：
 
-1. `ExecuteToolNode` 检测到 AskUserQuestion 调用 → 序列化状态存入 Redis（TTL 30min）
-2. 返回 `status=pending` 给前端，附带 `pendingId` 和问题列表
-3. 用户回答后，前端调用 `AnswerController` (`POST /api/claude/chat/answer`)
-4. 从 Redis 恢复 `QueryLoopState` + `UserContext`，构造 `ToolExecutionResultMessage`
-5. 重新执行状态机（可能递归触发新的 AskUserQuestion）
+1. `AskUserQuestionStrategy` 捕获 `askUserQuestion` / `askMultipleQuestions` / `askQuestionnaire`
+2. 解析问题列表并生成 `type=questionnaire` 的结构化 artifact
+3. 本轮状态机结束，前端渲染“作答”按钮
+4. 用户提交答案后，前端把答案格式化为普通用户消息并进入下一轮 `/chat`
 
 ### 工具系统（延迟加载）
 
@@ -192,7 +190,7 @@ ClaudeController → QueryEngineGraphConfig（外层状态机）
       → ChatModel.chat()（LLM 调用）
       → CacheTracker（缓存监控）
   → ExecuteToolNode（工具执行）
-      → AskUserQuestion → Redis 挂起 → AnswerController 恢复
+      → AskUserQuestion → questionnaire artifact → 下一轮普通用户消息
       → SpawnAgent → SubGraphNode（子状态机）
       → ArtifactTool → 文件解析/简历导出
   → Nudge 检测（纯文本响应是否需要继续思考）

@@ -13,7 +13,6 @@ package com.msz.resume.ai.chat.runtime.state;
  *   <li><b>Terminate</b>: 终止流转，结束循环</li>
  *   <li><b>ToolExecutedSuccess</b>: 工具执行成功</li>
  *   <li><b>ToolExecutedFailed</b>: 工具执行失败</li>
- *   <li><b>PendingUserInput</b>: 等待用户输入（AskUserQuestion）</li>
  * </ul>
  */
 public enum TransitionReason {
@@ -23,8 +22,7 @@ public enum TransitionReason {
     Retry("retry"),
     Terminate("terminate"),
     ToolExecutedSuccess("tool_executed_success"),
-    ToolExecutedFailed("tool_executed_failed"),
-    PendingUserInput("pending_user_input");
+    ToolExecutedFailed("tool_executed_failed");
 
     private final String value;
 

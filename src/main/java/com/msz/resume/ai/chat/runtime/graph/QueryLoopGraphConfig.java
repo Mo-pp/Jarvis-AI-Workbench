@@ -56,7 +56,6 @@ public class QueryLoopGraphConfig {
         // 分支3：LLM调用异常(error) → error_recovery
         // 分支4：需要重试(retry) → call_llm
         // 分支5：不可恢复(terminate) → end
-        // 分支6：等待用户输入(pending_user_input) → end（阻塞等待）
         AsyncEdgeAction<QueryLoopState> afterLlmRoute = new AsyncEdgeAction<QueryLoopState>() {
             @Override
             public CompletableFuture<String> apply(QueryLoopState currentState) {
@@ -129,19 +128,12 @@ public class QueryLoopGraphConfig {
         // ---------------------- execute_tool 之后的路由 ----------------------
         // 正常执行(tool_executed_success/tool_executed_failed) → call_llm
         // artifact_ready → end（前端产物已就绪）
-        // 等待用户输入(pending_user_input) → end（阻塞等待）
         AsyncEdgeAction<QueryLoopState> afterExecuteToolRoute = new AsyncEdgeAction<QueryLoopState>() {
             @Override
             public CompletableFuture<String> apply(QueryLoopState currentState) {
                 OpenVikingIdentity identity = OpenVikingIdentitySupport.fromQueryLoopState(currentState);
                 return OpenVikingIdentitySupport.supplyAsync(identity, () -> {
                     String transition = currentState.getTransition();
-
-                    // 等待用户输入，暂停循环
-                    if ("pending_user_input".equals(transition)) {
-                        log.info("[afterExecuteToolRoute] AskUserQuestion 挂起，等待用户回答");
-                        return "end";
-                    }
 
                     if (ToolExecutionResult.TRANSITION_ARTIFACT_READY.equals(transition)) {
                         log.info("[afterExecuteToolRoute] 工具已产出前端 artifact，本轮结束");
@@ -173,7 +165,7 @@ public class QueryLoopGraphConfig {
                 "end", END
         ));
 
-        // execute_tool 之后：正常回到call_llm，pending_user_input则结束等待
+        // execute_tool 之后：正常回到call_llm，artifact_ready 则结束
         graph.addConditionalEdges("execute_tool", afterExecuteToolRoute, Map.of(
                 "call_llm", "call_llm",
                 "end", END

@@ -4,7 +4,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -72,31 +71,4 @@ class TimelineActionServiceTest {
         assertEquals("Main Agent", payload.get("agentLabel"));
     }
 
-    @Test
-    @DisplayName("统一 action service 生成 pending 用户提问 action")
-    @SuppressWarnings("unchecked")
-    void pendingUserQuestionActionUsesCanonicalDisplayFields() {
-        Map<String, Object> action = service.pendingUserQuestionAction(
-                "pending-1",
-                "call-question",
-                List.of(Map.of("questionText", "你的目标岗位是什么？")),
-                9L
-        );
-
-        assertEquals("user_question_pending-1", action.get("id"));
-        assertEquals("user_question", action.get("kind"));
-        assertEquals("pending", action.get("eventType"));
-        assertEquals("pending-1", action.get("pendingId"));
-        assertEquals("call-question", action.get("toolCallId"));
-        assertEquals("需要你补充信息", action.get("title"));
-        assertEquals("你的目标岗位是什么？", action.get("summary"));
-        assertEquals(1, action.get("questionCount"));
-        assertEquals("pending", action.get("status"));
-        assertEquals(9L, action.get("firstSequence"));
-        assertEquals(9L, action.get("sequence"));
-        assertEquals(false, action.get("promptVisible"));
-        assertEquals(true, action.get("persistable"));
-        assertEquals(false, action.get("sensitive"));
-        assertEquals(1, ((List<Map<String, Object>>) action.get("questions")).size());
-    }
 }

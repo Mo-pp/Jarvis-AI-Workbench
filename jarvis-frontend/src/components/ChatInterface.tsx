@@ -39,7 +39,6 @@ import {
 import { ApiError, authService, chatService, fileService, getStoredAuth, resourceService, skillService } from '../services/api';
 import { useChatStream } from '../hooks/useChatStream';
 import type {
-  AskUserQuestionPayload,
   ArtifactEnvelope,
   ArtifactReadyPayload,
   AssistantCheckpointPayload,
@@ -51,7 +50,6 @@ import type {
   FileUploadResponse,
   MindmapData,
   OptimizeResult,
-  PendingPayload,
   Question,
   QuestionOption,
   QuestionnaireArtifact,
@@ -67,7 +65,6 @@ import type {
   TaskItem,
   TaskProgress,
   ToolUseActionPayload,
-  UserQuestionActionPayload,
   UserAnswer,
 } from '../types';
 import type { ResumeOptimizeRequest } from './ResumeOptimizePanel';
@@ -1086,23 +1083,6 @@ function createQuestionTraceMessage(
   };
 }
 
-function createUserQuestionActionPayload(
-  questions: Question[],
-  pendingId?: string,
-  toolCallId?: string,
-): UserQuestionActionPayload {
-  return {
-    id: `user_question_${pendingId || toolCallId || crypto.randomUUID()}`,
-    pendingId,
-    toolCallId,
-    title: '需要你补充信息',
-    summary: questions.length > 1 ? `${questions.length} 个问题待回答` : questions[0]?.questionText || '等待你的回答',
-    questionCount: questions.length,
-    status: 'pending',
-    timestamp: new Date().toISOString(),
-  };
-}
-
 function normalizeHistoryAction(item: unknown): AssistantActionItem | null {
   if (!isRecord(item)) return null;
 
@@ -1993,29 +1973,6 @@ export function ChatInterface() {
     );
   }, [setSessionMessages]);
 
-  const upsertUserQuestionAction = useCallback((targetSessionId: string, aiMessageId: string, payload: UserQuestionActionPayload) => {
-    setSessionMessages(targetSessionId, (prev) =>
-      prev.map((message) => {
-        if (message.id !== aiMessageId) return message;
-
-        const action: AssistantActionItem = {
-          ...payload,
-          kind: 'user_question',
-        };
-        const currentActions = message.actions || [];
-        const existingIndex = currentActions.findIndex((item) => item.id === action.id);
-        const nextActions: AssistantActionItem[] = existingIndex >= 0
-          ? currentActions.map((item) => (item.id === action.id ? action : item))
-          : [...currentActions, action];
-
-        return {
-          ...message,
-          actions: nextActions,
-        };
-      }),
-    );
-  }, [setSessionMessages]);
-
   const upsertDelegationAction = useCallback((targetSessionId: string, aiMessageId: string, payload: DelegationActionPayload) => {
     setSessionMessages(targetSessionId, (prev) =>
       prev.map((message) => {
@@ -2820,24 +2777,6 @@ export function ChatInterface() {
             updateTaskState(response.taskPlan, response.taskProgress);
           }
 
-          if (response.status === 'pending' && response.pendingQuestions?.length) {
-            if (!isVisibleSession(targetSessionId)) return;
-            const nextQuestions = response.pendingQuestions as Question[];
-            setSessionMessages(targetSessionId, (prev) =>
-              prev.map((message) =>
-                message.id === aiMessageId
-                  ? createQuestionTraceMessage(nextQuestions, response.pendingId, aiMessageId)
-                  : message,
-              ),
-            );
-            setPendingQuestions(nextQuestions);
-            setPendingQuestion(nextQuestions[0] || null);
-            setPendingId(response.pendingId || '');
-            setActiveQuestionnaire({ type: 'questionnaire', questions: nextQuestions });
-            setTimeout(() => setIsQuestionDialogOpen(true), 300);
-            return;
-          }
-
           handleAssistantDone(response.aiMessage || '', {
             artifacts: response.artifacts,
             mindmapData: response.mindmapData,
@@ -2933,68 +2872,6 @@ export function ChatInterface() {
         handleRequestError(`发生错误：${payload.message}`);
       },
 
-      onAskUserQuestion: (payload: AskUserQuestionPayload) => {
-        if (!isVisibleSession(targetSessionId)) {
-          setSessionLoading(targetSessionId, false);
-          return;
-        }
-        setSessionMessages(targetSessionId, (prev) =>
-          prev.map((message) =>
-            message.id === aiMessageId
-              ? createQuestionTraceMessage(payload.questions || [], payload.pendingId, aiMessageId)
-              : message,
-          ),
-        );
-        if (payload.questions?.length) {
-          upsertUserQuestionAction(
-            targetSessionId,
-            aiMessageId,
-            createUserQuestionActionPayload(payload.questions, payload.pendingId, payload.toolCallId),
-          );
-            setPendingQuestions(payload.questions);
-            setPendingQuestion(payload.questions[0]);
-            setPendingId(payload.pendingId);
-            setActiveQuestionnaire({ type: 'questionnaire', questions: payload.questions });
-            setTimeout(() => setIsQuestionDialogOpen(true), 300);
-        }
-        setStreamingMessageId(null);
-        setOptimizingWorkbenchTabId(null);
-        setSessionLoading(targetSessionId, false);
-        finishMainAgentState('pending', '等待你的回答');
-      },
-
-      onPending: (payload: PendingPayload) => {
-        if (!isVisibleSession(targetSessionId)) {
-          setSessionLoading(targetSessionId, false);
-          return;
-        }
-        updateTaskState(payload.taskPlan, payload.taskProgress);
-        if (payload.questions?.length) {
-          upsertUserQuestionAction(
-            targetSessionId,
-            aiMessageId,
-            createUserQuestionActionPayload(payload.questions, payload.pendingId, payload.toolCallId),
-          );
-          setSessionMessages(targetSessionId, (prev) => {
-            const hasQuestionTrace = prev.some((message) =>
-              message.questionTrace?.pendingId === payload.pendingId ||
-              (message.id === aiMessageId && message.questionTrace),
-            );
-            if (hasQuestionTrace) return prev;
-            return [...prev, createQuestionTraceMessage(payload.questions, payload.pendingId)];
-          });
-          setPendingQuestions(payload.questions);
-          setPendingQuestion(payload.questions[0]);
-          setPendingId(payload.pendingId);
-          setActiveQuestionnaire({ type: 'questionnaire', questions: payload.questions });
-          setTimeout(() => setIsQuestionDialogOpen(true), 300);
-        }
-        setStreamingMessageId(null);
-        setOptimizingWorkbenchTabId(null);
-        setSessionLoading(targetSessionId, false);
-        finishMainAgentState('pending', '等待你的回答');
-      },
-
       onConnectionError: (error) => {
         handleRequestError(`连接中断：${error.message}`);
       },
@@ -3021,7 +2898,6 @@ export function ChatInterface() {
     upsertAssistantCheckpoint,
     upsertDelegationAction,
     upsertRunStep,
-    upsertUserQuestionAction,
     updateMainAgentRunning,
     updateTaskState,
   ]);

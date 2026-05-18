@@ -16,7 +16,6 @@ import type {
   ResourceItemResponse,
   Session,
   SkillUploadResponse,
-  SubmitAnswerRequest,
   VerificationCodeType,
 } from '../types';
 
@@ -242,22 +241,6 @@ export const chatService = {
     return response.data as Session[] | string[];
   },
 
-  submitAnswer: async (request: SubmitAnswerRequest): Promise<ChatResponse> => {
-    const response = await api.post<ChatResponse>('/chat/answer', request);
-    return response.data as ChatResponse;
-  },
-
-  submitAnswerStream: async (request: SubmitAnswerRequest): Promise<Response> => {
-    const token = getAuthToken();
-    return fetch(`${API_BASE_URL}/chat/answer/stream`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify(request),
-    });
-  },
 };
 
 export const fileService = {

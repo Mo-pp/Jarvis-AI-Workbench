@@ -34,26 +34,6 @@ public sealed interface HookResult {
      */
     java.util.Map<String, Object> modifiedArgs();
 
-    /**
-     * 挂起会话ID（仅 pending 结果有值）
-     */
-    String pendingId();
-
-    /**
-     * 待回答问题（仅 pending 结果有值）
-     */
-    java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> pendingQuestions();
-
-    /**
-     * 确认后需要执行的工具请求（仅 pending 结果有值）
-     */
-    dev.langchain4j.agent.tool.ToolExecutionRequest pendingConfirmedRequest();
-
-    /**
-     * 确认 token（仅 pending 结果有值）
-     */
-    String pendingConfirmationToken();
-
     // ========== 工厂方法 ==========
 
     /**
@@ -81,25 +61,6 @@ public sealed interface HookResult {
         return new ModifyArgs(newArgs);
     }
 
-    /**
-     * 挂起等待用户确认：终止 Hook 链，状态机进入 pending_user_input。
-     */
-    static HookResult pending(String pendingId,
-                              java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> questions,
-                              dev.langchain4j.agent.tool.ToolExecutionRequest confirmedRequest) {
-        return new Pending(pendingId, questions, confirmedRequest, null);
-    }
-
-    /**
-     * 挂起等待用户确认，并保存确认 token。
-     */
-    static HookResult pending(String pendingId,
-                              java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> questions,
-                              dev.langchain4j.agent.tool.ToolExecutionRequest confirmedRequest,
-                              String confirmationToken) {
-        return new Pending(pendingId, questions, confirmedRequest, confirmationToken);
-    }
-
     // ========== 内部实现 ==========
 
     /**
@@ -113,10 +74,6 @@ public sealed interface HookResult {
         @Override public boolean isBlocked() { return false; }
         @Override public String blockReason() { return null; }
         @Override public java.util.Map<String, Object> modifiedArgs() { return null; }
-        @Override public String pendingId() { return null; }
-        @Override public java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> pendingQuestions() { return null; }
-        @Override public dev.langchain4j.agent.tool.ToolExecutionRequest pendingConfirmedRequest() { return null; }
-        @Override public String pendingConfirmationToken() { return null; }
 
         @Override public String toString() { return "HookResult.continueResult()"; }
     }
@@ -134,10 +91,6 @@ public sealed interface HookResult {
         @Override public boolean isBlocked() { return true; }
         @Override public String blockReason() { return reason; }
         @Override public java.util.Map<String, Object> modifiedArgs() { return null; }
-        @Override public String pendingId() { return null; }
-        @Override public java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> pendingQuestions() { return null; }
-        @Override public dev.langchain4j.agent.tool.ToolExecutionRequest pendingConfirmedRequest() { return null; }
-        @Override public String pendingConfirmationToken() { return null; }
 
         @Override public String toString() { return "HookResult.block(" + reason + ")"; }
     }
@@ -155,41 +108,7 @@ public sealed interface HookResult {
         @Override public boolean isBlocked() { return false; }
         @Override public String blockReason() { return null; }
         @Override public java.util.Map<String, Object> modifiedArgs() { return args; }
-        @Override public String pendingId() { return null; }
-        @Override public java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> pendingQuestions() { return null; }
-        @Override public dev.langchain4j.agent.tool.ToolExecutionRequest pendingConfirmedRequest() { return null; }
-        @Override public String pendingConfirmationToken() { return null; }
 
         @Override public String toString() { return "HookResult.modifyArgs(" + args + ")"; }
-    }
-
-    /**
-     * 挂起结果
-     */
-    final class Pending implements HookResult {
-        private final String pendingId;
-        private final java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> questions;
-        private final dev.langchain4j.agent.tool.ToolExecutionRequest confirmedRequest;
-        private final String confirmationToken;
-
-        Pending(String pendingId,
-                java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> questions,
-                dev.langchain4j.agent.tool.ToolExecutionRequest confirmedRequest,
-                String confirmationToken) {
-            this.pendingId = pendingId;
-            this.questions = questions;
-            this.confirmedRequest = confirmedRequest;
-            this.confirmationToken = confirmationToken;
-        }
-
-        @Override public boolean isBlocked() { return true; }
-        @Override public String blockReason() { return "等待用户确认"; }
-        @Override public java.util.Map<String, Object> modifiedArgs() { return null; }
-        @Override public String pendingId() { return pendingId; }
-        @Override public java.util.List<com.msz.resume.ai.chat.tooling.dto.QuestionDto> pendingQuestions() { return questions; }
-        @Override public dev.langchain4j.agent.tool.ToolExecutionRequest pendingConfirmedRequest() { return confirmedRequest; }
-        @Override public String pendingConfirmationToken() { return confirmationToken; }
-
-        @Override public String toString() { return "HookResult.pending(" + pendingId + ")"; }
     }
 }

@@ -16,7 +16,6 @@ import com.msz.resume.ai.chat.runtime.trace.InMemoryTimelineActionRecorder;
 import com.msz.resume.ai.chat.runtime.trace.TimelineActionRecorder;
 import com.msz.resume.ai.chat.runtime.trace.stream.TraceReplayService;
 import com.msz.resume.ai.chat.runtime.trace.stream.TimelineActionRecorderFactory;
-import com.msz.resume.ai.chat.runtime.trace.TimelineActionService;
 import com.msz.resume.ai.chat.runtime.trace.TraceAgentDescriptor;
 import com.msz.resume.ai.chat.runtime.trace.TraceService;
 import com.msz.resume.ai.file.service.FileStorageService;
@@ -53,17 +52,17 @@ import com.msz.resume.ai.chat.session.service.SessionPersistenceService;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 /**
- * 对话接口Controller
+ * Claude 对话主控制器。
  *
- * 核心功能：
- * 1. 提供HTTP接口调用状态机
- * 2. 支持会话管理（新建/恢复）
- * 3. 支持流式响应（可选）
+ * 作用：承接聊天主入口、SSE 流式输出、会话历史读取和 Trace 回放请求，
+ * 是前端进入 Query Loop 与 Trace 主链的第一站。
+ * 可以把它理解成“总前台”，用户每次发问、追历史、补拉 trace，基本都先经过这里。
  *
- * 状态机执行流程：
- * START → session_init → run_inner_loop → usage_stat → (循环判断) → END
- *                                              ↓
- *                                     内层：call_llm → execute_tool → call_llm
+ * 代码逻辑：
+ * 1. 同步接口负责恢复/创建会话，组装 SessionState 后驱动外层图执行
+ * 2. SSE 接口负责创建 ChatRunTraceContext、绑定 ChatStreamContext，并实时推送事件
+ * 3. 流式执行期间把 timeline action 同步写入内存和 Trace Stream，结束后统一持久化
+ * 4. 历史/回放接口负责把消息记录和 trace 事件重新整理给前端恢复展示
  */
 
 @Slf4j
@@ -84,10 +83,10 @@ public class ClaudeController {
     private final AskUserQuestionParser askUserQuestionParser;
     private final FileStorageService fileStorageService;
     private final TraceService traceService;
-    private final TimelineActionService timelineActionService;
     private final TimelineActionRecorderFactory timelineActionRecorderFactory;
     private final TraceReplayService traceReplayService;
 
+    /** 注入聊天主流程和 trace 相关依赖，组装控制器需要的全链路能力。 */
     public ClaudeController(CompiledGraph<SessionState> queryEngineGraph,
                             SessionPersistenceService persistenceService,
                             OpenVikingSessionGateway openVikingSessionGateway,
@@ -97,7 +96,6 @@ public class ClaudeController {
                             AskUserQuestionParser askUserQuestionParser,
                             FileStorageService fileStorageService,
                             TraceService traceService,
-                            TimelineActionService timelineActionService,
                             TimelineActionRecorderFactory timelineActionRecorderFactory,
                             TraceReplayService traceReplayService) {
         this.queryEngineGraph = queryEngineGraph;
@@ -109,7 +107,6 @@ public class ClaudeController {
         this.askUserQuestionParser = askUserQuestionParser;
         this.fileStorageService = fileStorageService;
         this.traceService = traceService;
-        this.timelineActionService = timelineActionService;
         this.timelineActionRecorderFactory = timelineActionRecorderFactory;
         this.traceReplayService = traceReplayService;
     }
@@ -290,41 +287,14 @@ public class ClaudeController {
                                     + subAgentInputTokens + subAgentOutputTokens)
                             .build());
 
-            // ========== 10. 检测 AskUserQuestion 挂起状态 ==========
-            String pendingId = finalInnerState.getPendingId();
-            List<?> pendingQuestions = finalInnerState.getPendingQuestions();
-
-            if (pendingId != null && pendingQuestions != null) {
-                // AskUserQuestion 工具被调用，会话挂起等待用户回答
-                responseBuilder.status("pending")
-                        .pendingId(pendingId)
-                        .pendingQuestions(pendingQuestions)
-                        .requiresUserInput(true);
-                persistenceService.persistTimelineActions(
-                        sessionId,
-                        currentAccount.getUsername(),
-                        finalSessionState,
-                        -1,
-                        List.of(timelineActionService.pendingUserQuestionAction(
-                                pendingId,
-                                finalInnerState.getPendingToolCallId(),
-                                pendingQuestions,
-                                1L
-                        ))
-                );
-                log.info("[执行挂起] sessionId: {}, pendingId: {}, 等待用户回答 {} 个问题",
-                        sessionId, pendingId, pendingQuestions.size());
-            } else {
-                responseBuilder.status("success");
-                // 非 pending 状态才持久化。pending 状态的最后一条 AI 消息通常包含尚未配对
-                // ToolExecutionResult 的工具调用，写入 DB 会破坏后续 LLM 历史协议。
-                persistenceService.completeRound(
-                        sessionId,
-                        currentAccount.getUsername(),
-                        finalSessionState,
-                        finalInnerState.getMessages()
-                );
-            }
+            // ========== 10. 持久化会话 ==========
+            responseBuilder.status("success");
+            persistenceService.completeRound(
+                    sessionId,
+                    currentAccount.getUsername(),
+                    finalSessionState,
+                    finalInnerState.getMessages()
+            );
 
             // ========== 11. 设置任务规划进度 ==========
             List<Map<String, Object>> taskPlan = finalInnerState.getTaskPlan();
@@ -490,40 +460,6 @@ public class ClaudeController {
                     return;
                 }
 
-                String pendingId = finalInnerState.getPendingId();
-                List<?> pendingQuestions = finalInnerState.getPendingQuestions();
-                String pendingToolCallId = finalInnerState.getPendingToolCallId();
-                if (pendingId != null && pendingQuestions != null) {
-                    traceService.completeMainLlmRound(traceContext);
-                    Map<String, Object> pendingPayload = buildPendingPayload(
-                            pendingId,
-                            pendingToolCallId,
-                            pendingQuestions,
-                            finalSessionState,
-                            finalInnerState
-                    );
-                    sendBestEffort(sessionId, sink, ignored ->
-                            sink.send("ask_user_question", Map.of(
-                                    "pendingId", pendingId,
-                                    "toolCallId", pendingToolCallId != null ? pendingToolCallId : "",
-                                    "questions", pendingQuestions
-                            )));
-                    sendBestEffort(sessionId, sink, ignored ->
-                            sink.send("pending", pendingPayload));
-                    persistenceService.persistTimelineActions(
-                            sessionId,
-                            currentAccount.getUsername(),
-                            finalSessionState,
-                            -1,
-                            timelineActionRecorder.snapshot()
-                    );
-                    ChatStreamContext.clear(sessionId);
-                    if (!sink.isClosed()) {
-                        sink.complete();
-                    }
-                    return;
-                }
-
                 List<ChatMessage> finalMessages = finalInnerState.getMessages();
                 List<ChatArtifact> artifacts = ArtifactResponseExtractor.extractLatestArtifacts(finalMessages, objectMapper);
                 String lastAiContent = ArtifactResponseExtractor.stripPureArtifactText(
@@ -622,6 +558,7 @@ public class ClaudeController {
     }
 
     @GetMapping("/session/{sessionId}/trace/replay")
+    /** 按 sequence 补拉某次会话的 trace 事件，常用于断线续传和历史回放。 */
     public Result<List<ChatStreamEvent>> replaySessionTrace(HttpServletRequest httpServletRequest,
                                                             @PathVariable String sessionId,
                                                             @RequestParam(required = false) String runId,
@@ -658,6 +595,7 @@ public class ClaudeController {
     }
 
     @PatchMapping("/session/{sessionId}/title")
+    /** 修改会话标题，让会话列表更容易识别。 */
     public Result<SessionSummaryResponse> renameSession(HttpServletRequest httpServletRequest,
                                                         @PathVariable String sessionId,
                                                         @RequestBody SessionRenameRequest request) {
@@ -675,6 +613,7 @@ public class ClaudeController {
     }
 
     @PatchMapping("/session/{sessionId}/pin")
+    /** 设置会话是否置顶，方便前端按优先级展示。 */
     public Result<SessionSummaryResponse> pinSession(HttpServletRequest httpServletRequest,
                                                      @PathVariable String sessionId,
                                                      @RequestBody SessionPinRequest request) {
@@ -704,6 +643,7 @@ public class ClaudeController {
         return Result.success(sessions);
     }
 
+    /** 把会话摘要模型转换成接口层响应对象。 */
     private SessionSummaryResponse toSessionSummaryResponse(SessionSummary summary) {
         return SessionSummaryResponse.builder()
                 .sessionId(summary.sessionId())
@@ -794,6 +734,7 @@ public class ClaudeController {
         return formatted;
     }
 
+    /** 把持久化历史消息重新整理成前端可直接渲染的结构。 */
     private Map<String, Object> formatHistoryMessage(HistoryMessage historyMessage) {
         if (historyMessage.uiOnly()) {
             Map<String, Object> formatted = new HashMap<>();
@@ -829,6 +770,7 @@ public class ClaudeController {
         return formatted;
     }
 
+    /** 给仅包含 timeline action 的历史消息生成一个稳定展示 ID。 */
     private String historyActionMessageId(List<Map<String, Object>> timelineActions) {
         if (timelineActions != null && !timelineActions.isEmpty()) {
             Object firstId = timelineActions.getFirst().get("id");
@@ -839,6 +781,7 @@ public class ClaudeController {
         return "history-action-message-" + UUID.randomUUID();
     }
 
+    /** 从时间线动作里找出第一条用户补充信息类 action。 */
     private Map<String, Object> firstUserQuestionAction(List<Map<String, Object>> timelineActions) {
         if (timelineActions == null) {
             return null;
@@ -851,6 +794,7 @@ public class ClaudeController {
         return null;
     }
 
+    /** 从 AI 消息的工具调用里找出第一条提问类工具请求。 */
     private ToolExecutionRequest firstQuestionRequest(AiMessage aiMsg) {
         if (aiMsg == null || !aiMsg.hasToolExecutionRequests()) {
             return null;
@@ -864,11 +808,14 @@ public class ClaudeController {
         return null;
     }
 
+    /** 判断一个工具名是不是 AskUserQuestion 这类会挂起等待用户回答的工具。 */
     private boolean isQuestionTool(String toolName) {
         return "askUserQuestion".equals(toolName)
                 || "askMultipleQuestions".equals(toolName)
                 || "askQuestionnaire".equals(toolName);
     }
+
+    /** 统计本轮总 token 用量，并把子 Agent 的消耗一并折算进去。 */
     private Map<String, Object> buildTokenUsagePayload(SessionState sessionState, QueryLoopState innerState) {
         int subAgentInputTokens = 0;
         int subAgentOutputTokens = 0;
@@ -889,10 +836,12 @@ public class ClaudeController {
         );
     }
 
+    /** 构建最简版 message_done 事件载荷，给无 artifact 的普通回复使用。 */
     private Map<String, Object> buildMessageDonePayload(String content, String mindmapData, String questionnaireData) {
         return buildMessageDonePayload(content, mindmapData, questionnaireData, List.of());
     }
 
+    /** 构建完整的 message_done 事件载荷，把可见回复内容一次性发给前端。 */
     private Map<String, Object> buildMessageDonePayload(
             String content,
             String mindmapData,
@@ -912,10 +861,12 @@ public class ClaudeController {
         return payload;
     }
 
+    /** 判断一条助手结果是否有任何值得前端展示的可见内容。 */
     private boolean hasVisibleAssistantResult(String content, String mindmapData, String questionnaireData) {
         return hasVisibleAssistantResult(content, mindmapData, questionnaireData, List.of());
     }
 
+    /** 综合文本、图谱、问卷和 artifact 判断这轮助手结果是不是“空回包”。 */
     private boolean hasVisibleAssistantResult(
             String content,
             String mindmapData,
@@ -927,6 +878,7 @@ public class ClaudeController {
                 || (artifacts != null && !artifacts.isEmpty());
     }
 
+    /** 构建 SSE done 事件载荷，告诉前端本轮会话已经正常收尾。 */
     private Map<String, Object> buildDonePayload(SessionState finalSessionState, QueryLoopState finalInnerState) {
         Map<String, Object> payload = new HashMap<>();
         List<Map<String, Object>> taskPlan = finalInnerState.getTaskPlan();
@@ -937,24 +889,7 @@ public class ClaudeController {
         return payload;
     }
 
-    private Map<String, Object> buildPendingPayload(
-            String pendingId,
-            String pendingToolCallId,
-            List<?> pendingQuestions,
-            SessionState finalSessionState,
-            QueryLoopState finalInnerState) {
-        Map<String, Object> payload = new HashMap<>();
-        List<Map<String, Object>> taskPlan = finalInnerState.getTaskPlan();
-        payload.put("status", "pending");
-        payload.put("pendingId", pendingId);
-        payload.put("toolCallId", pendingToolCallId != null ? pendingToolCallId : "");
-        payload.put("questions", pendingQuestions);
-        payload.put("tokenUsage", buildTokenUsagePayload(finalSessionState, finalInnerState));
-        payload.put("taskPlan", taskPlan != null ? taskPlan : List.of());
-        payload.put("taskProgress", buildTaskProgress(taskPlan));
-        return payload;
-    }
-
+    /** 统计任务计划进度，方便前端直接展示当前推进情况。 */
     private Map<String, Integer> buildTaskProgress(List<Map<String, Object>> taskPlan) {
         Map<String, Integer> progress = new HashMap<>();
         progress.put("total", taskPlan != null ? taskPlan.size() : 0);
@@ -972,6 +907,7 @@ public class ClaudeController {
         return progress;
     }
 
+    /** 只有任务计划真的变化时才推送 task_update，避免前端反复重绘。 */
     private List<Map<String, Object>> sendTaskUpdateIfChanged(
             ChatStreamEventSink sink,
             QueryLoopState innerState,
@@ -992,6 +928,7 @@ public class ClaudeController {
         return new ArrayList<>(currentTaskPlan);
     }
 
+    /** 以“尽力而为”的方式发送 SSE 事件，失败也不影响主流程收尾。 */
     private void sendBestEffort(String sessionId, ChatStreamEventSink sink, ThrowingConsumer<ChatStreamEventSink> sender) {
         if (sink.isClosed()) {
             return;
@@ -1004,6 +941,7 @@ public class ClaudeController {
     }
 
     @FunctionalInterface
+    /** 允许发送 SSE 时抛出受检异常的简单函数接口。 */
     private interface ThrowingConsumer<T> {
         void accept(T value) throws Exception;
     }
@@ -1042,6 +980,7 @@ public class ClaudeController {
                 });
     }
 
+    /** 根据当前登录用户和租户身份组装出系统提示词需要的用户画像。 */
     private UserProfile buildUserProfile(Account account,
                                          OpenVikingIdentity identity,
                                          String language,

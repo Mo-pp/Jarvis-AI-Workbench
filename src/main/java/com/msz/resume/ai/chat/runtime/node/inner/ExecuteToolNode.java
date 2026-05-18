@@ -13,7 +13,6 @@ import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
 import com.msz.resume.ai.chat.runtime.node.inner.strategy.ToolExecutionContext;
 import com.msz.resume.ai.chat.runtime.node.inner.strategy.ToolExecutionResult;
 import com.msz.resume.ai.chat.runtime.node.inner.strategy.ToolExecutionStrategy;
-import com.msz.resume.ai.chat.application.pending.PendingSessionService;
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
@@ -31,18 +30,17 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
 /**
- * 执行工具节点：处理大模型的工具调用
+ * 工具执行协调节点。
  *
- * <p>作为协调者，负责：
- * <ol>
- *   <li>Hook 预检：通过 HookEngine 对所有工具做预检</li>
- *   <li>策略选择：根据工具类型选择对应的执行策略</li>
- *   <li>结果收集：汇总执行结果并更新状态</li>
- * </ol>
+ * 作用：承接上一轮 LLM 产出的工具调用计划，先过 Hook，再选策略执行，
+ * 最后把工具结果和 trace 元数据重新写回状态机。
+ * 可以把它理解成“执行总控台”，LLM 开单，它负责分检、派工、收单。
  *
- * <p>核心原则：不管工具执行成功还是失败，都把结果/错误信息包装成 ToolExecutionResultMessage
- * 追加到 MESSAGES，让 LLM 能看到完整的工具执行结果或错误详情，由 LLM 自己决定下一步
- * （换工具、重试、文本回答等）。
+ * 代码逻辑：
+ * 1. 读取最后一条 AiMessage 里的全部工具请求，并补齐当前 trace 上下文
+ * 2. 先跑 Hook 预检，处理阻断
+ * 3. 按请求类型选择普通工具策略或 spawnAgent 策略执行
+ * 4. 根据结果更新 tool batch 的 trace 状态，并把消息、上下文信息写回 QueryLoopState
  *
  * @see ToolExecutionStrategy 工具执行策略接口
  * @see HookEngine Hook 拦截引擎
@@ -52,18 +50,16 @@ import java.util.concurrent.CompletableFuture;
 public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
 
     private final HookEngine hookEngine;
-    private final PendingSessionService pendingSessionService;
     private final List<ToolExecutionStrategy> strategies;
     private final TraceService traceService;
     private final ToolActionEventService toolActionEventService;
 
+    /** 注入 Hook、执行策略和 trace 事件服务。 */
     public ExecuteToolNode(HookEngine hookEngine,
-                           PendingSessionService pendingSessionService,
                            List<ToolExecutionStrategy> strategies,
                            TraceService traceService,
                            ToolActionEventService toolActionEventService) {
         this.hookEngine = hookEngine;
-        this.pendingSessionService = pendingSessionService;
         this.traceService = traceService;
         this.toolActionEventService = toolActionEventService;
         // 按优先级排序策略（数字越小优先级越高）
@@ -97,33 +93,6 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
             // 2. Hook 预检
             HookPreCheckResult preCheckResult = preCheckWithHooks(currentState, toolRequests, traceContext, agentDescriptor);
 
-            // 如果 Hook 要求挂起确认，直接返回 pending，不执行任何工具
-            if (preCheckResult.pendingResult != null) {
-                if (preCheckResult.pendingResult.pendingConfirmedRequest() != null) {
-                    pendingSessionService.saveWithReplacementRequest(
-                            preCheckResult.pendingResult.pendingId(),
-                            currentState.getSessionId(),
-                            currentState,
-                            preCheckResult.pendingOriginalRequest.id(),
-                            preCheckResult.pendingResult.pendingQuestions(),
-                            preCheckResult.pendingResult.pendingConfirmedRequest(),
-                            preCheckResult.pendingResult.pendingConfirmationToken()
-                    );
-                }
-                ToolExecutionResult pendingResult = ToolExecutionResult.builder()
-                        .messages(preCheckResult.blockedResults)
-                        .contexts(List.of(preCheckResult.pendingOriginalRequest))
-                        .transition(ToolExecutionResult.TRANSITION_PENDING)
-                        .pendingId(preCheckResult.pendingResult.pendingId())
-                        .pendingQuestions(preCheckResult.pendingResult.pendingQuestions())
-                        .pendingConfirmedRequest(preCheckResult.pendingResult.pendingConfirmedRequest())
-                        .build();
-                if (traceContext != null) {
-                    traceService.pendingToolBatch(traceContext, agentDescriptor, batchStepId);
-                }
-                return buildStateUpdate(pendingResult, currentState);
-            }
-
             // 如果所有工具都被 Hook 阻断，直接返回
             if (preCheckResult.activeRequests.isEmpty()) {
                 ToolExecutionResult blockedResult = ToolExecutionResult.builder()
@@ -152,9 +121,7 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
                 ToolExecutionStrategy strategy = selectStrategy(context);
                 ToolExecutionResult result = strategy.execute(context);
                 if (traceContext != null) {
-                    if (ToolExecutionResult.TRANSITION_PENDING.equals(result.transition())) {
-                        traceService.pendingToolBatch(traceContext, agentDescriptor, batchStepId);
-                    } else if (ToolExecutionResult.TRANSITION_FAILED.equals(result.transition())) {
+                    if (ToolExecutionResult.TRANSITION_FAILED.equals(result.transition())) {
                         traceService.failToolBatch(traceContext, agentDescriptor, batchStepId);
                     } else {
                         traceService.completeToolBatch(traceContext, agentDescriptor, batchStepId);
@@ -192,15 +159,6 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
                     state, state.getSessionId(), req.id(), state.isSubAgent()
             );
             HookResult preResult = hookEngine.preToolUse(hookCtx);
-
-            if (preResult.pendingId() != null) {
-                log.info("[ExecuteToolNode] PreToolUse Hook 挂起: tool={}, pendingId={}",
-                        req.name(), preResult.pendingId());
-                if (traceContext != null) {
-                    traceService.pendingToolCall(traceContext, agentDescriptor, req);
-                }
-                return HookPreCheckResult.pending(preResult, req);
-            }
 
             if (preResult.isBlocked()) {
                 log.info("[ExecuteToolNode] PreToolUse Hook 阻断: tool={}, reason={}",
@@ -249,6 +207,7 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
     /**
      * 查找 NormalToolStrategy（默认策略）
      */
+    /** 兜底找到普通工具策略，保证任何批次至少有一个可执行路径。 */
     private ToolExecutionStrategy findNormalToolStrategy() {
         return strategies.stream()
                 .filter(s -> s instanceof com.msz.resume.ai.chat.runtime.node.inner.strategy.NormalToolStrategy)
@@ -300,13 +259,6 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
             stateUpdate.put(QueryLoopState.TASK_PLAN, result.taskPlan());
         }
 
-        // 如果是 AskUserQuestion 挂起，设置 pending 信息
-        if (result != null && result.pendingId() != null) {
-            stateUpdate.put(QueryLoopState.PENDING_ID, result.pendingId());
-            stateUpdate.put(QueryLoopState.PENDING_QUESTIONS, result.pendingQuestions());
-            stateUpdate.put(QueryLoopState.PENDING_TOOL_CALL_ID, contexts.isEmpty() ? null : contexts.get(0).id());
-        }
-
         return stateUpdate;
     }
 
@@ -316,18 +268,6 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
     private record HookPreCheckResult(
             List<ToolExecutionRequest> activeRequests,
             List<ToolExecutionResultMessage> blockedResults,
-            List<ToolExecutionRequest> blockedRequests,
-            HookResult pendingResult,
-            ToolExecutionRequest pendingOriginalRequest
-    ) {
-        private HookPreCheckResult(List<ToolExecutionRequest> activeRequests,
-                                   List<ToolExecutionResultMessage> blockedResults,
-                                   List<ToolExecutionRequest> blockedRequests) {
-            this(activeRequests, blockedResults, blockedRequests, null, null);
-        }
-
-        private static HookPreCheckResult pending(HookResult pendingResult, ToolExecutionRequest originalRequest) {
-            return new HookPreCheckResult(List.of(), List.of(), List.of(), pendingResult, originalRequest);
-        }
-    }
+            List<ToolExecutionRequest> blockedRequests
+    ) {}
 }

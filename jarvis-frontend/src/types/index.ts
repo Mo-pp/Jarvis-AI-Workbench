@@ -329,9 +329,7 @@ export type StreamEventType =
   | 'delegation_error'
   | 'task_update'
   | 'done'
-  | 'error'
-  | 'ask_user_question'
-  | 'pending';
+  | 'error';
 
 /** session_started 事件载荷 */
 export interface SessionStartedPayload {
@@ -565,50 +563,6 @@ export interface UserAnswer {
   skipped?: boolean;
 }
 
-/** 提交答案请求体 */
-export interface SubmitAnswerRequest {
-  pendingId: string;
-  answers: UserAnswer[];
-}
-
-/** 提交答案响应（后端包装格式） */
-export interface SubmitAnswerResponse {
-  code: number;
-  message: string;
-  data?: {
-    sessionId: string;
-    status: 'success' | 'failure' | 'pending';
-    aiMessage?: string;
-    tokenUsage?: TokenUsage;
-    pendingSession?: PendingSessionData;
-  };
-}
-
-/** ask_user_question 事件载荷 */
-export interface AskUserQuestionPayload {
-  pendingId: string;
-  toolCallId: string;
-  questions: Question[];
-}
-
-/** pending 事件载荷 */
-export interface PendingPayload {
-  status: 'pending';
-  pendingId: string;
-  toolCallId: string;
-  questions: Question[];
-  tokenUsage?: TokenUsage;
-  taskPlan?: TaskItem[];
-  taskProgress?: TaskProgress;
-}
-
-/** 待处理会话数据（从 pending 事件中提取） */
-export interface PendingSessionData {
-  pendingId: string;
-  sessionId: string;
-  questions: Question[];
-}
-
 /** 传统非流式响应（向后兼容） */
 export interface ChatResponse {
   sessionId: string;
@@ -618,12 +572,8 @@ export interface ChatResponse {
   questionnaireData?: string;
   messageHistory?: MessageItem[];
   tokenUsage?: TokenUsage;
-  status: 'success' | 'failure' | 'timeout' | 'pending';
+  status: 'success' | 'failure' | 'timeout';
   errorMessage?: string;
-  pendingId?: string;
-  pendingQuestions?: Question[];
-  requiresUserInput?: boolean;
   taskPlan?: TaskItem[];
   taskProgress?: TaskProgress;
-  pendingSession?: PendingSessionData;
 }

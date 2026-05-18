@@ -18,7 +18,7 @@ public record HookRule(
         /** 工具名正则匹配模式，如 "askUserQuestion|askMultipleQuestions" */
         String matcher,
 
-        /** Hook 实现的 Spring Bean 名称，如 "askUserQuestionHook" */
+        /** Hook 实现的 Spring Bean 名称，如 "subAgentBlockHook" */
         String action,
 
         /** 执行优先级，数字越小越先执行（默认 100） */

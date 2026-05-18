@@ -54,7 +54,7 @@ public class ChatResponse {
 
     /**
      * 执行状态
-     * success/failure/timeout/pending
+     * success/failure/timeout
      */
     private String status;
 
@@ -62,29 +62,6 @@ public class ChatResponse {
      * 错误信息（如果有）
      */
     private String errorMessage;
-
-    // ==================== AskUserQuestion 阻塞式支持 ====================
-
-    /**
-     * 挂起会话ID
-     * 当 LLM 调用 AskUserQuestion 工具时设置
-     * 前端需要保存此ID，用于 POST /api/chat/answer 恢复会话
-     */
-    private String pendingId;
-
-    /**
-     * 待回答的问题列表
-     * 当 LLM 调用 AskUserQuestion 工具时设置
-     * 前端根据此字段渲染问答 UI
-     */
-    private List<?> pendingQuestions;
-
-    /**
-     * 是否需要用户输入
-     * 为 true 时，前端应渲染问答 UI 并等待用户回答
-     */
-    @Builder.Default
-    private Boolean requiresUserInput = false;
 
     // ==================== 任务规划进度支持 ====================
 

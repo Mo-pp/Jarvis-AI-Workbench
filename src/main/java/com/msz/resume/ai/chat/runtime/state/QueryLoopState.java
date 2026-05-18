@@ -18,12 +18,17 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * ！内层小循环状态实现！
+ * Query Loop 内层状态对象。
  *
- * 就是存这一轮思考-行动循环里的所有变量
+ * 作用：集中保存一次思考-行动循环里所有会被节点读写的变量，
+ * 包括消息历史、工具上下文、任务计划、子 Agent 数据，以及 trace 透传字段。
+ * 可以把它理解成“内层总账本”，CallLlmNode、ExecuteToolNode、子 Agent 都在这本账上接力写。
  *
- * 修改说明：新增 NUDGE_COUNT、LOW_YIELD_COUNT、LAST_OUTPUT_TOKEN_COUNT 三个字段，
- * 支持 Nudge 催促机制和递减收益检测
+ * 代码逻辑：
+ * 1. 用静态字段名约定所有状态槽位
+ * 2. 通过 SCHEMA 声明每个槽位的默认值与合并策略
+ * 3. 提供一组便捷取值方法，把原始 state map 包成更稳妥的领域访问接口
+ * 4. 把 traceRunId / traceAgentId / traceAgentLabel / traceAgentScope 挂进内层状态，保证整条链路可追踪
  */
 
 public class QueryLoopState extends AgentState{
@@ -150,26 +155,6 @@ public class QueryLoopState extends AgentState{
      */
     public static final String TASK_PLAN = "taskPlan";
 
-    // ==================== AskUserQuestion 阻塞式支持 ====================
-
-    /**
-     * 挂起会话ID
-     * 当 AskUserQuestion 工具被调用时，生成唯一的 pendingId 用于恢复
-     */
-    public static final String PENDING_ID = "pendingId";
-
-    /**
-     * 待回答的问题列表
-     * AskUserQuestion 工具执行后设置，传递给前端渲染问答 UI
-     */
-    public static final String PENDING_QUESTIONS = "pendingQuestions";
-
-    /**
-     * 工具调用ID
-     * 用于构造 ToolExecutionResultMessage
-     */
-    public static final String PENDING_TOOL_CALL_ID = "pendingToolCallId";
-
     // ==================== 子Agent（SubGraphNode）支持 ====================
 
     /**
@@ -290,10 +275,6 @@ public class QueryLoopState extends AgentState{
             Map.entry(CACHE_USAGE, Channels.base(CacheUsage::empty)),
             // 任务规划支持（初始值为空列表）
             Map.entry(TASK_PLAN, Channels.base(ArrayList::new)),
-            // AskUserQuestion 阻塞式支持（初始值为空字符串/空列表，表示无挂起）
-            Map.entry(PENDING_ID, Channels.base(() -> "")),
-            Map.entry(PENDING_QUESTIONS, Channels.base(ArrayList::new)),
-            Map.entry(PENDING_TOOL_CALL_ID, Channels.base(() -> "")),
             // 子Agent支持（初始值：非子Agent模式，空工具集，无轮次限制，空任务，0 token，空累加器）
             Map.entry(IS_SUB_AGENT, Channels.base(() -> false)),
             Map.entry(AVAILABLE_TOOLS, Channels.base(() -> new LinkedHashSet<String>())),
@@ -313,6 +294,7 @@ public class QueryLoopState extends AgentState{
 
 
 
+    /** 用一份初始状态数据创建 QueryLoopState。 */
     public QueryLoopState(Map<String, Object> initData) {
         super(initData);
     }
@@ -322,81 +304,83 @@ public class QueryLoopState extends AgentState{
     //调用 messages() 就能拿到聊天消息；如果没有任何消息，就自动返回一个空列表，绝对不会让程序崩溃报错。
 // 状态字段的便捷访问方法
 
-    // 从状态里拿messages变量
+    /** 取当前消息历史；没有时返回空列表，避免节点层到处判空。 */
     public List<ChatMessage> getMessages() {
         // 从状态里拿messages变量，如果没有，就返回个空列表
         return this.<List<ChatMessage>>value(MESSAGE_HISTORY).orElse(new ArrayList<>());
     }
 
-    // 从状态里拿toolUseContext变量
+    /** 取当前工具调用上下文列表。 */
     public List<Object> getToolUseContext() {
         return this.<List<Object>>value(TOOL_USE_CONTEXT).orElse(new ArrayList<>());
     }
 
-    // 从状态里拿autoCompactTracking变量
+    /** 取上下文压缩追踪信息。 */
     public List<Object> getAutoCompactTracking() {
         return this.<List<Object>>value(AUTO_COMPACT_TRACKING).orElse(new ArrayList<>());
     }
 
-    // 从状态里拿maxTokenRecoveryCount变量
+    /** 取 Token 超限恢复次数。 */
     public int getMaxTokenRecoveryCount() {
         return this.<Integer>value(MAX_TOKEN_RECOVERY_COUNT).orElse(0);
     }
 
-    //拿是否尝试过压缩
+    /** 判断本轮是否已经尝试过 reactive compact。 */
     public boolean hasCompacted() {
         return this.<Boolean>value(HAS_ATTEMPTED_COMPACT).orElse(false);
     }
 
-    //拿循环次数
+    /** 取当前 inner loop 已经跑了多少轮。 */
     public int getTurnCount() {
         return this.<Integer>value(TURN_COUNT).orElse(0);
     }
 
 
-    //拿上次循环跳转原因
+    /** 取上一轮节点执行后留下的跳转原因。 */
     public String getTransition() {
         return this.<String>value(TRANSITION).orElse(null);
     }
 
-    // 拿 LLM 错误类型
+    /** 取最近一次 LLM 错误类型，没有则返回 null。 */
     public String getErrorType() {
         String type = this.<String>value(ERROR_TYPE).orElse("");
         return (type != null && !type.isBlank()) ? type : null;
     }
 
-    // 拿 LLM 错误消息
+    /** 取最近一次 LLM 错误消息，没有则返回 null。 */
     public String getErrorMessage() {
         String message = this.<String>value(ERROR_MESSAGE).orElse("");
         return (message != null && !message.isBlank()) ? message : null;
     }
 
-    //拿Nudge催促次数
+    /** 取当前已经给过 LLM 多少次 nudge。 */
     public int getNudgeCount() {
         return this.<Integer>value(NUDGE_COUNT).orElse(0);
     }
 
-    //拿低产出连续次数
+    /** 取当前连续低产出的计数。 */
     public int getLowYieldCount() {
         return this.<Integer>value(LOW_YIELD_COUNT).orElse(0);
     }
 
-    //拿上次LLM输出的token数
+    /** 取上一轮 LLM 输出 token 数，用于判断是不是还在有效推进。 */
     public int getLastOutputTokenCount() {
         return this.<Integer>value(LAST_OUTPUT_TOKEN_COUNT).orElse(0);
     }
 
-    //拿用户上下文
+    /** 取当前用户画像上下文。 */
     public UserProfile getUserContext() {
         return this.<UserProfile>value(USER_CONTEXT).orElse(UserProfile.empty());
     }
 
+    /** 取当前 OpenViking 身份；信息不完整时按无效身份处理。 */
     public OpenVikingIdentity getOpenVikingIdentity() {
         OpenVikingIdentity identity = this.<OpenVikingIdentity>value(OPENVIKING_IDENTITY).orElse(OpenVikingIdentity.empty());
         return identity.isComplete() ? identity : null;
     }
 
     @SuppressWarnings("unchecked")
+    /** 取已经注入过的 OpenViking URI 记录，避免后续轮次重复召回。 */
     public Map<String, String> getSurfacedOpenVikingUris() {
         Map<?, ?> surfaced = this.<Map<?, ?>>value(SURFACED_OPENVIKING_URIS).orElse(Map.of());
         Map<String, String> result = new LinkedHashMap<>();
@@ -408,18 +392,18 @@ public class QueryLoopState extends AgentState{
         return result;
     }
 
-    //拿已发现的延迟工具名称集合
+    /** 取当前已发现的延迟工具名称集合。 */
     @SuppressWarnings("unchecked")
     public Set<String> getDiscoveredTools() {
         return this.<Set<String>>value(DISCOVERED_TOOLS).orElse(new LinkedHashSet<>());
     }
 
-    //拿缓存使用情况
+    /** 取最近一次 LLM 请求的缓存使用情况。 */
     public CacheUsage getCacheUsage() {
         return this.<CacheUsage>value(CACHE_USAGE).orElse(CacheUsage.empty());
     }
 
-    //拿会话ID
+    /** 取当前会话 ID。 */
     public String getSessionId() {
         return this.<String>value(SESSION_ID).orElse("");
     }
@@ -434,36 +418,6 @@ public class QueryLoopState extends AgentState{
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getTaskPlan() {
         return this.<List<Map<String, Object>>>value(TASK_PLAN).orElse(new ArrayList<>());
-    }
-
-    // ==================== AskUserQuestion 便捷方法 ====================
-
-    /**
-     * 获取挂起会话ID
-     * 返回 null 表示没有挂起的 AskUserQuestion
-     */
-    public String getPendingId() {
-        String id = this.<String>value(PENDING_ID).orElse("");
-        return (id != null && !id.isBlank()) ? id : null;
-    }
-
-    /**
-     * 获取待回答的问题列表
-     * 返回 null 表示没有待回答的问题
-     */
-    @SuppressWarnings("unchecked")
-    public List<?> getPendingQuestions() {
-        List<?> questions = this.<List<?>>value(PENDING_QUESTIONS).orElse(new ArrayList<>());
-        return (questions != null && !questions.isEmpty()) ? questions : null;
-    }
-
-    /**
-     * 获取工具调用ID
-     * 返回 null 表示没有挂起的工具调用
-     */
-    public String getPendingToolCallId() {
-        String id = this.<String>value(PENDING_TOOL_CALL_ID).orElse("");
-        return (id != null && !id.isBlank()) ? id : null;
     }
 
     // ==================== 子Agent 便捷方法 ====================
@@ -529,21 +483,25 @@ public class QueryLoopState extends AgentState{
         return this.<List<Map<String, Integer>>>value(SUB_AGENT_TOKEN_ACCUMULATOR).orElse(new ArrayList<>());
     }
 
+    /** 取当前流式运行 ID，没有则返回 null。 */
     public String getTraceRunId() {
         String runId = this.<String>value(TRACE_RUN_ID).orElse("");
         return (runId != null && !runId.isBlank()) ? runId : null;
     }
 
+    /** 取当前 Agent 的 trace 标识，主 Agent 默认是 main。 */
     public String getTraceAgentId() {
         String agentId = this.<String>value(TRACE_AGENT_ID).orElse("main");
         return (agentId != null && !agentId.isBlank()) ? agentId : "main";
     }
 
+    /** 取当前 Agent 的前端展示名称。 */
     public String getTraceAgentLabel() {
         String agentLabel = this.<String>value(TRACE_AGENT_LABEL).orElse("Main Agent");
         return (agentLabel != null && !agentLabel.isBlank()) ? agentLabel : "Main Agent";
     }
 
+    /** 取当前 Agent 作用域，主链默认是 main。 */
     public String getTraceAgentScope() {
         String agentScope = this.<String>value(TRACE_AGENT_SCOPE).orElse("main");
         return (agentScope != null && !agentScope.isBlank()) ? agentScope : "main";

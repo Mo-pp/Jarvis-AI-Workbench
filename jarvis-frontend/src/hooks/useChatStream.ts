@@ -1,7 +1,6 @@
 import { useCallback, useRef } from 'react';
 import { getAuthToken } from '../services/api';
 import type {
-  AskUserQuestionPayload,
   AssistantCheckpointPayload,
   ChatStreamEvent,
   ArtifactReadyPayload,
@@ -10,7 +9,6 @@ import type {
   ErrorPayload,
   MessageDeltaPayload,
   MessageDonePayload,
-  PendingPayload,
   RunStepPayload,
   SessionStartedPayload,
   TaskUpdatePayload,
@@ -29,14 +27,7 @@ interface StreamCallbacks {
   onTaskUpdate?: (payload: TaskUpdatePayload) => void;
   onDone?: (payload: DonePayload) => void;
   onError?: (payload: ErrorPayload) => void;
-  onAskUserQuestion?: (payload: AskUserQuestionPayload) => void;
-  onPending?: (payload: PendingPayload) => void;
   onConnectionError?: (error: Error) => void;
-}
-
-interface StreamRequestOptions {
-  method?: 'GET' | 'POST';
-  body?: unknown;
 }
 
 interface ParsedSseEvent {
@@ -70,7 +61,7 @@ class ChatStreamClient {
   private manuallyClosed = false;
   private suppressCloseError = false;
 
-  async connect(url: string, callbacks: StreamCallbacks, options: StreamRequestOptions = {}) {
+  async connect(url: string, callbacks: StreamCallbacks) {
     this.disconnect();
     this.callbacks = callbacks;
     this.currentMessage = '';
@@ -82,13 +73,11 @@ class ChatStreamClient {
     try {
       const token = getAuthToken();
       const response = await fetch(url, {
-        method: options.method || 'GET',
+        method: 'GET',
         headers: {
           Accept: 'text/event-stream',
-          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        ...(options.body ? { body: JSON.stringify(options.body) } : {}),
         signal: this.abortController.signal,
       });
 
@@ -190,14 +179,6 @@ class ChatStreamClient {
       case 'task_update':
         this.callbacks.onTaskUpdate?.(data.payload as TaskUpdatePayload);
         break;
-      case 'ask_user_question':
-        this.callbacks.onAskUserQuestion?.(data.payload as AskUserQuestionPayload);
-        break;
-      case 'pending':
-        this.callbacks.onPending?.(data.payload as PendingPayload);
-        this.suppressCloseError = true;
-        this.disconnect();
-        break;
       case 'done':
         this.callbacks.onDone?.(data.payload as DonePayload);
         this.terminalEventReceived = true;
@@ -262,15 +243,6 @@ export function useChatStream() {
     void getClient(sessionId).connect(url, callbacks);
   }, [getClient]);
 
-  const submitAnswer = useCallback((
-    request: unknown,
-    callbacks: StreamCallbacks,
-  ) => {
-    const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/claude';
-    const url = `${apiBaseUrl}/chat/answer/stream`;
-    void getClient('answer').connect(url, callbacks, { method: 'POST', body: request });
-  }, [getClient]);
-
   const disconnect = useCallback((streamKey?: string) => {
     if (streamKey) {
       clientMapRef.current.get(streamKey)?.disconnect();
@@ -292,7 +264,6 @@ export function useChatStream() {
 
   return {
     sendMessage,
-    submitAnswer,
     disconnect,
     getCurrentMessage,
     resetMessage,

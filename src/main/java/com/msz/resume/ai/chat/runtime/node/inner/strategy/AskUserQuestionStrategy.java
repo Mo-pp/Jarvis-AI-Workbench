@@ -27,8 +27,6 @@ import java.util.stream.Collectors;
  * 工具结果会返回一个 type=questionnaire 的结构化 artifact，由前端识别后渲染“作答”按钮。
  * 用户提交后作为普通用户消息进入下一轮对话。
  *
- * <p>历史阻塞-恢复入口保留在 AnswerController/PendingSessionService 中，暂不作为默认链路。
- *
  * <ol>
  *   <li>解析问题列表</li>
  *   <li>构造 questionnaire artifact</li>
@@ -66,7 +64,7 @@ public class AskUserQuestionStrategy implements ToolExecutionStrategy {
         QueryLoopState state = context.state();
         List<ToolExecutionRequest> requests = context.requests();
 
-        // 找到第一个 AskUserQuestion 请求（挂起会话只需要处理第一个）
+        // 找到第一个 AskUserQuestion 请求，整批 ask 会合并成一个 questionnaire artifact。
         ToolExecutionRequest askRequest = findAskUserQuestionRequest(requests);
 
         if (askRequest == null) {
