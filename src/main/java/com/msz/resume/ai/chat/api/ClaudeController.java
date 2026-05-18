@@ -670,8 +670,7 @@ public class ClaudeController {
         if (messages == null || messages.isEmpty()) {
             return null;
         }
-        // 从后往前找最后一条有实质内容的AI消息
-        // 跳过空文本的AiMessage（Nudge催促后LLM可能返回空文本）
+        // 从后往前找最后一条有实质内容的AI消息，跳过空文本的 AiMessage。
         for (int i = messages.size() - 1; i >= 0; i--) {
             ChatMessage msg = messages.get(i);
             if (msg instanceof AiMessage aiMsg) {

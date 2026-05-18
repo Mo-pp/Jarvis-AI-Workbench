@@ -127,20 +127,20 @@ LLM 可通过 `AskUserQuestionTool` 向用户提问，当前实现为**前端 qu
 - **阻塞递归**：子 Agent 不允许调用 `spawnAgent`/`askUserQuestion`/`askMultipleQuestions`
 - **状态标志**：`IS_SUB_AGENT=true`, `SUB_AGENT_TYPE`, `MAX_TURNS`, `SUB_AGENT_TASK`
 
-### Nudge 催促机制与递减收益检测
+### 纯文本回复终止策略
 
-当 LLM 返回纯文本（无工具调用）时，系统判断是否需要继续思考：
+当前内层 Query Loop 不再使用 Nudge 催促机制。`CallLlmNode` 返回后由 `QueryLoopGraphConfig` 判断响应类型：
 
-1. **Nudge 催促**：追加提示消息引导 LLM 继续思考，`NUDGE_COUNT` 记录催促次数
-2. **递减收益检测**：如果连续 Nudge 后 LLM 增量输出 < 500 token，`LOW_YIELD_COUNT` 递增
-3. **终止条件**：`LOW_YIELD_COUNT >= 3` 或 `NUDGE_COUNT` 超限，停止循环返回最终回复
+1. **有工具调用**：进入 `ExecuteToolNode` 执行工具，随后回到 `CallLlmNode`
+2. **纯文本回复**：视为 LLM 已完成本轮任务，直接结束内层循环
+3. **异常/重试**：进入错误恢复或重新调用 LLM
 
-相关状态字段：`NUDGE_COUNT`, `LOW_YIELD_COUNT`, `LAST_OUTPUT_TOKEN_COUNT`（定义于 `QueryLoopState`）。
+历史上的 `NUDGE_COUNT`、`LOW_YIELD_COUNT` 递减收益检测不再参与路由决策。
 
 ### 流式对话与实时 Trace
 
 **SSE 流式对话**：`GET /api/claude/chat/stream` 返回 `text/event-stream`：
-- 事件类型：`session_started`, `llm_chunk`, `tool_call`, `tool_result`, `task_update`, `ask_user_question`, `pending`, `message_done`, `done`, `error`
+- 事件类型：`session_started`, `message_delta`, `message_done`, `assistant_checkpoint`, `run_step`, `tool_use_*`, `artifact_ready`, `delegation_*`, `task_update`, `done`, `error`
 - `ChatStreamEventSink` 封装 SSE 事件发送，`InMemoryTimelineActionRecorder` 记录时间线动作
 
 **实时 Trace 系统**：支持前端实时展示 Agent 执行过程
@@ -193,7 +193,7 @@ ClaudeController → QueryEngineGraphConfig（外层状态机）
       → AskUserQuestion → questionnaire artifact → 下一轮普通用户消息
       → SpawnAgent → SubGraphNode（子状态机）
       → ArtifactTool → 文件解析/简历导出
-  → Nudge 检测（纯文本响应是否需要继续思考）
+  → 纯文本回复 → END（无工具调用时结束本轮）
   → SessionPersistenceService（MySQL 持久化）
 
 AuthController → JwtAuthenticationFilter → AccountService → JWT Token 签发

@@ -99,22 +99,22 @@ public class QueryLoopState extends AgentState{
     public static final String ERROR_MESSAGE = "errorMessage";
 
     /**
-     * Nudge 催促次数
-     * LLM 返回纯文本后追加催促消息的次数，用于防止无限循环
+     * 历史兼容字段：旧版 Nudge 催促次数。
+     * 当前 Query Loop 已不再使用 Nudge 路由，纯文本回复会直接结束本轮。
      */
-    public static final String NUDGE_COUNT = "nudgeCount"; // Nudge催促次数
+    public static final String NUDGE_COUNT = "nudgeCount";
 
     /**
-     * 低产出连续次数
-     * 连续 Nudge 后 LLM 增量输出 < 500 token 的次数，达到3次则停止循环
+     * 历史兼容字段：旧版低产出连续次数。
+     * 当前不再参与递减收益检测或路由决策。
      */
-    public static final String LOW_YIELD_COUNT = "lowYieldCount"; // 低产出连续次数
+    public static final String LOW_YIELD_COUNT = "lowYieldCount";
 
     /**
-     * 上一次 LLM 输出的 token 数
-     * 用于递减收益检测：如果连续多次输出很少 token，说明 LLM 已无实质进展
+     * 最近一次 LLM 输出 token 数。
+     * 当前仅作为统计状态保留，不参与 Nudge 或递减收益路由。
      */
-    public static final String LAST_OUTPUT_TOKEN_COUNT = "lastOutputTokenCount"; // 上次LLM输出token数
+    public static final String LAST_OUTPUT_TOKEN_COUNT = "lastOutputTokenCount";
 
     /**
      * 用户上下文
@@ -243,8 +243,8 @@ public class QueryLoopState extends AgentState{
      * 5. HAS_ATTEMPTED_COMPACT: 是否试过压缩
      * 6. TURN_COUNT: 思考 → 行动 循环执行了多少次
      * 7. TRANSITION: 上一次跳转原因
-     * 8. NUDGE_COUNT: Nudge 催促次数，防止无限循环
-     * 9. LOW_YIELD_COUNT: 低产出连续次数，递减收益检测
+     * 8. NUDGE_COUNT: 历史兼容字段，当前不参与路由
+     * 9. LOW_YIELD_COUNT: 历史兼容字段，当前不参与路由
      * 10. LAST_OUTPUT_TOKEN_COUNT: 上一次 LLM 输出的 token 数
      */
 
@@ -353,17 +353,17 @@ public class QueryLoopState extends AgentState{
         return (message != null && !message.isBlank()) ? message : null;
     }
 
-    /** 取当前已经给过 LLM 多少次 nudge。 */
+    /** 取历史兼容的 Nudge 计数字段；当前路由不再使用。 */
     public int getNudgeCount() {
         return this.<Integer>value(NUDGE_COUNT).orElse(0);
     }
 
-    /** 取当前连续低产出的计数。 */
+    /** 取历史兼容的低产出计数字段；当前路由不再使用。 */
     public int getLowYieldCount() {
         return this.<Integer>value(LOW_YIELD_COUNT).orElse(0);
     }
 
-    /** 取上一轮 LLM 输出 token 数，用于判断是不是还在有效推进。 */
+    /** 取上一轮 LLM 输出 token 数。 */
     public int getLastOutputTokenCount() {
         return this.<Integer>value(LAST_OUTPUT_TOKEN_COUNT).orElse(0);
     }
