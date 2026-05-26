@@ -1,9 +1,28 @@
+import type { Plugin } from 'vite'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+function preserveStandardBackdropFilter(): Plugin {
+  return {
+    name: 'preserve-standard-backdrop-filter',
+    generateBundle(_, bundle) {
+      for (const asset of Object.values(bundle)) {
+        if (asset.type !== 'asset' || !asset.fileName.endsWith('.css') || typeof asset.source !== 'string') {
+          continue
+        }
+
+        asset.source = asset.source.replace(
+          /-webkit-backdrop-filter:([^;}]+);/g,
+          'backdrop-filter:$1;-webkit-backdrop-filter:$1;',
+        )
+      }
+    },
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), preserveStandardBackdropFilter()],
   build: {
     rollupOptions: {
       output: {

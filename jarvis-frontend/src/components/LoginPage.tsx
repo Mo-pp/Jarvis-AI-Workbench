@@ -200,6 +200,8 @@ export function LoginPage({ user, onAuthenticated, onLogout }: LoginPageProps) {
             <div className="auth-input-row">
               <Mail size={17} />
               <input
+                id="auth-email"
+                name="email"
                 type="email"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
@@ -235,6 +237,8 @@ export function LoginPage({ user, onAuthenticated, onLogout }: LoginPageProps) {
             <div className="auth-input-row">
               <User size={17} />
               <input
+                id="auth-username"
+                name="username"
                 type="text"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
@@ -252,6 +256,8 @@ export function LoginPage({ user, onAuthenticated, onLogout }: LoginPageProps) {
             <div className="auth-input-row">
               <KeyRound size={17} />
               <input
+                id="auth-code"
+                name="verification-code"
                 type="text"
                 value={code}
                 onChange={(event) => setCode(event.target.value)}
@@ -269,6 +275,8 @@ export function LoginPage({ user, onAuthenticated, onLogout }: LoginPageProps) {
           <div className="auth-input-row">
             <Lock size={17} />
             <input
+              id="auth-password"
+              name="password"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -282,6 +290,8 @@ export function LoginPage({ user, onAuthenticated, onLogout }: LoginPageProps) {
         {mode === 'login' && (
           <label className="remember-row">
             <input
+              id="auth-remember"
+              name="remember"
               type="checkbox"
               checked={remember}
               onChange={(event) => setRemember(event.target.checked)}

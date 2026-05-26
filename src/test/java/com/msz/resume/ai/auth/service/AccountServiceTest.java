@@ -7,6 +7,7 @@ import com.msz.resume.ai.auth.service.impl.AccountServiceImpl;
 import com.msz.resume.ai.auth.vo.ChangePasswordVO;
 import com.msz.resume.ai.auth.vo.RegisterVO;
 import com.msz.resume.ai.auth.vo.ResetPasswordVO;
+import com.msz.resume.ai.integrations.openviking.core.config.OpenVikingProperties;
 import com.msz.resume.ai.integrations.openviking.core.service.OpenVikingProvisioningService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -26,6 +27,7 @@ class AccountServiceTest {
     private MailService mailService;
     private PasswordEncoder passwordEncoder;
     private OpenVikingProvisioningService openVikingProvisioningService;
+    private OpenVikingProperties openVikingProperties;
     private AccountServiceImpl accountService;
 
     @BeforeEach
@@ -34,7 +36,8 @@ class AccountServiceTest {
         mailService = Mockito.mock(MailService.class);
         passwordEncoder = Mockito.mock(PasswordEncoder.class);
         openVikingProvisioningService = Mockito.mock(OpenVikingProvisioningService.class);
-        accountService = new AccountServiceImpl(accountMapper, mailService, passwordEncoder, openVikingProvisioningService);
+        openVikingProperties = new OpenVikingProperties();
+        accountService = new AccountServiceImpl(accountMapper, mailService, passwordEncoder, openVikingProvisioningService, openVikingProperties);
     }
 
     @Test

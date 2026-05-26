@@ -194,6 +194,25 @@ const ROOT_RESOURCE_PATH = 'viking://resources/';
 const ROOT_WORKSPACE_PATH = 'viking://';
 const ROOT_WORKSPACE_PATH_WITHOUT_SLASH = 'viking:';
 
+function createClientId(): string {
+  const cryptoApi = globalThis.crypto;
+
+  if (typeof cryptoApi?.randomUUID === 'function') {
+    return cryptoApi.randomUUID();
+  }
+
+  if (typeof cryptoApi?.getRandomValues === 'function') {
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  return `id-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -1068,7 +1087,7 @@ function createQuestionTraceMessage(
   questionnaire?: QuestionnaireArtifact,
 ): ChatMessage {
   return {
-    id: id || crypto.randomUUID(),
+    id: id || createClientId(),
     role: 'assistant',
     content: formatQuestionMessage(questions),
     timestamp: new Date(),
@@ -1090,7 +1109,7 @@ function normalizeHistoryAction(item: unknown): AssistantActionItem | null {
   const status = typeof item.status === 'string' ? item.status : undefined;
   const base = {
     ...item,
-    id: typeof item.id === 'string' && item.id ? item.id : `history-action-${crypto.randomUUID()}`,
+    id: typeof item.id === 'string' && item.id ? item.id : `history-action-${createClientId()}`,
     timestamp: typeof item.timestamp === 'string' ? item.timestamp : undefined,
   };
 
@@ -1192,7 +1211,7 @@ function createQuestionnaireAnswerTraceMessage(questions: Question[], answers: U
     .join('\n');
 
   return {
-    id: crypto.randomUUID(),
+    id: createClientId(),
     role: 'user',
     content,
     timestamp: new Date(),
@@ -1445,7 +1464,7 @@ function normalizeHistory(raw: unknown): ChatMessage[] {
 
 function createAssistantError(content: string): ChatMessage {
   return {
-    id: crypto.randomUUID(),
+    id: createClientId(),
     role: 'assistant',
     content,
     timestamp: new Date(),
@@ -2032,7 +2051,7 @@ export function ChatInterface() {
       setSessionId(restoreSessionId);
       return;
     }
-    persistSessionId(crypto.randomUUID());
+    persistSessionId(createClientId());
   }, [persistSessionId, restoreSessionId]);
 
   useEffect(() => {
@@ -2089,7 +2108,7 @@ export function ChatInterface() {
         const message = error instanceof Error ? error.message : '未知错误';
         if (isExpiredSessionHistoryError(error, message)) {
           clearPersistedSessionId();
-          persistSessionId(crypto.randomUUID());
+          persistSessionId(createClientId());
         }
         setRestoreSessionId(null);
       });
@@ -2268,7 +2287,7 @@ export function ChatInterface() {
 
   const handleNewChat = () => {
     setRestoreSessionId(null);
-    const nextSessionId = crypto.randomUUID();
+    const nextSessionId = createClientId();
     setSessionMessages(nextSessionId, []);
     persistSessionId(nextSessionId);
     setIsChatMode(false);
@@ -2487,7 +2506,7 @@ export function ChatInterface() {
   };
 
   const openMindmapInWorkbench = useCallback((mindmap: MindmapData, sourceId?: string) => {
-    const tabId = `mindmap-${sourceId || crypto.randomUUID()}`;
+    const tabId = `mindmap-${sourceId || createClientId()}`;
 
     setWorkbenchTabs((currentTabs) => {
       const existingTab = currentTabs.find((tab) => tab.id === tabId);
@@ -2515,7 +2534,7 @@ export function ChatInterface() {
   }, []);
 
   const openResumeInWorkbench = useCallback((resume: ResumeVO, sourceId?: string, optimizeResult?: OptimizeResult) => {
-    const tabId = `resume-${sourceId || crypto.randomUUID()}`;
+    const tabId = `resume-${sourceId || createClientId()}`;
 
     setWorkbenchTabs((currentTabs) => {
       const existingTab = currentTabs.find((tab) => tab.id === tabId);
@@ -2556,7 +2575,7 @@ export function ChatInterface() {
       return;
     }
 
-    const tabId = `optimize-${sourceId || crypto.randomUUID()}`;
+    const tabId = `optimize-${sourceId || createClientId()}`;
 
     setWorkbenchTabs((currentTabs) => {
       const existingTab = currentTabs.find((tab) => tab.id === tabId);
@@ -2644,7 +2663,7 @@ export function ChatInterface() {
     const currentFileId = attachedFile?.fileId;
 
     const userMessage: ChatMessage = options?.displayMessage || {
-      id: crypto.randomUUID(),
+      id: createClientId(),
       role: 'user',
       content: displayContent,
       timestamp: new Date(),
@@ -2660,7 +2679,7 @@ export function ChatInterface() {
     setIsChatMode(true);
     startMainAgentState();
 
-    const aiMessageId = crypto.randomUUID();
+    const aiMessageId = createClientId();
     const aiMessagePlaceholder: ChatMessage = {
       id: aiMessageId,
       role: 'assistant',

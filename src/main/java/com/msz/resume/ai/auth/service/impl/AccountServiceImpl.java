@@ -18,29 +18,35 @@ import com.msz.resume.ai.auth.service.MailService;
 import com.msz.resume.ai.auth.vo.ChangePasswordVO;
 import com.msz.resume.ai.auth.vo.RegisterVO;
 import com.msz.resume.ai.auth.vo.ResetPasswordVO;
+import com.msz.resume.ai.integrations.openviking.core.config.OpenVikingProperties;
 import com.msz.resume.ai.integrations.openviking.core.exception.OpenVikingClientException;
 import com.msz.resume.ai.integrations.openviking.core.service.OpenVikingProvisioningService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 
 @Service
+@Slf4j
 public class AccountServiceImpl implements AccountService {
 
     private final AccountMapper accountMapper;
     private final MailService mailService;
     private final PasswordEncoder passwordEncoder;
     private final OpenVikingProvisioningService openVikingProvisioningService;
+    private final OpenVikingProperties openVikingProperties;
 
     public AccountServiceImpl(AccountMapper accountMapper,
                               MailService mailService,
                               PasswordEncoder passwordEncoder,
-                              OpenVikingProvisioningService openVikingProvisioningService) {
+                              OpenVikingProvisioningService openVikingProvisioningService,
+                              OpenVikingProperties openVikingProperties) {
         this.accountMapper = accountMapper;
         this.mailService = mailService;
         this.passwordEncoder = passwordEncoder;
         this.openVikingProvisioningService = openVikingProvisioningService;
+        this.openVikingProperties = openVikingProperties;
     }
 
     /** 根据用户名或邮箱查询（支持两种登录方式） */
@@ -134,9 +140,21 @@ public class AccountServiceImpl implements AccountService {
         try {
             adminKey = openVikingProvisioningService.createAdminAccountForUsername(vo.getUsername());
         } catch (OpenVikingClientException e) {
+            if (!openVikingProperties.isProvisioningRequired()) {
+                log.warn("[AccountService] OpenViking provisioning failed, continuing in test mode: username={}, error={}",
+                        vo.getUsername(), e.getMessage());
+                adminKey = null;
+            } else {
             return "注册失败: " + e.getMessage();
+            }
         } catch (Exception e) {
+            if (!openVikingProperties.isProvisioningRequired()) {
+                log.warn("[AccountService] OpenViking provisioning failed, continuing in test mode: username={}",
+                        vo.getUsername(), e);
+                adminKey = null;
+            } else {
             return "注册失败: OpenViking 开通异常: " + e.getMessage();
+            }
         }
 
         // 4. 创建账户

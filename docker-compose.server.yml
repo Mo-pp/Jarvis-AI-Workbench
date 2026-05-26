@@ -1,0 +1,93 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-alpine
+    container_name: jarvis-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-jarvis}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?set RABBITMQ_DEFAULT_PASS in .env}
+      TZ: Asia/Shanghai
+    volumes:
+      - jarvis-rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+    mem_limit: 256m
+
+  jarvis-api:
+    image: mcr.microsoft.com/playwright/java:v1.53.0-noble
+    container_name: jarvis-api
+    restart: unless-stopped
+    working_dir: /app
+    command: ["java", "-Xms96m", "-Xmx384m", "-jar", "/app/app.jar"]
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./target/jarvis-0.0.1-SNAPSHOT.jar:/app/app.jar:ro
+    environment:
+      TZ: Asia/Shanghai
+      SERVER_PORT: 8084
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-prod}
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:?set SPRING_DATASOURCE_URL in .env}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:?set SPRING_DATASOURCE_USERNAME in .env}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?set SPRING_DATASOURCE_PASSWORD in .env}
+      SPRING_DATA_REDIS_HOST: ${SPRING_DATA_REDIS_HOST:-host.docker.internal}
+      SPRING_DATA_REDIS_PORT: ${SPRING_DATA_REDIS_PORT:-6379}
+      SPRING_DATA_REDIS_PASSWORD: ${SPRING_DATA_REDIS_PASSWORD:-}
+      SPRING_DATA_REDIS_DATABASE: ${SPRING_DATA_REDIS_DATABASE:-0}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER:-jarvis}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS:?set RABBITMQ_DEFAULT_PASS in .env}
+      JARVIS_SECURITY_KEY: ${JARVIS_SECURITY_KEY:?set JARVIS_SECURITY_KEY in .env}
+      JARVIS_SECURITY_EXPIRE_HOURS: ${JARVIS_SECURITY_EXPIRE_HOURS:-168}
+      JARVIS_LLM_PROVIDER: ${JARVIS_LLM_PROVIDER:-gpt}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.openai.com/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.4-mini}
+      OPENAI_WIRE_API: ${OPENAI_WIRE_API:-chat}
+      OPENAI_TIMEOUT: ${OPENAI_TIMEOUT:-120}
+      BIGMODEL_API_KEY: ${BIGMODEL_API_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      QIANFAN_OPENAI_API_KEY: ${QIANFAN_OPENAI_API_KEY:-}
+      OPENVIKING_BASE_URL: ${OPENVIKING_BASE_URL:-}
+      OPENVIKING_API_KEY: ${OPENVIKING_API_KEY:-}
+      OPENVIKING_ACCOUNT: ${OPENVIKING_ACCOUNT:-jarvis}
+      OPENVIKING_USER: ${OPENVIKING_USER:-u-demo-001}
+      OPENVIKING_AGENT: ${OPENVIKING_AGENT:-jarvis}
+      OPENVIKING_PROVISIONING_REQUIRED: ${OPENVIKING_PROVISIONING_REQUIRED:-false}
+      OPENVIKING_SESSION_ENABLED: ${OPENVIKING_SESSION_ENABLED:-false}
+      OPENVIKING_RECALL_ENABLED: ${OPENVIKING_RECALL_ENABLED:-false}
+      JARVIS_MCP_ENABLED: ${JARVIS_MCP_ENABLED:-false}
+      JARVIS_MCP_FAIL_FAST: ${JARVIS_MCP_FAIL_FAST:-false}
+      JARVIS_MCP_BIGMODEL_WEB_SEARCH_ENABLED: ${JARVIS_MCP_BIGMODEL_WEB_SEARCH_ENABLED:-false}
+      MAIL_HOST: ${MAIL_HOST:-smtp.qq.com}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_USERNAME: ${MAIL_USERNAME:-}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:-}
+      MAIL_PROTOCOL: ${MAIL_PROTOCOL:-smtps}
+      LANGCHAIN4J_HTTP_LOG_LEVEL: ${LANGCHAIN4J_HTTP_LOG_LEVEL:-WARN}
+    ports:
+      - "127.0.0.1:${JARVIS_API_PORT:-8084}:8084"
+    mem_limit: 640m
+
+  jarvis-web:
+    image: nginx:1.27-alpine
+    container_name: jarvis-web
+    restart: unless-stopped
+    depends_on:
+      - jarvis-api
+    volumes:
+      - ./jarvis-frontend/dist:/usr/share/nginx/html:ro
+      - ./docker/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "127.0.0.1:${JARVIS_WEB_PORT:-18080}:80"
+    mem_limit: 128m
+
+volumes:
+  jarvis-rabbitmq-data:

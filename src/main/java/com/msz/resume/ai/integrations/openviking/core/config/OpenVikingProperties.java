@@ -20,6 +20,9 @@ public class OpenVikingProperties {
     /** OpenViking API Key */
     private String apiKey;
 
+    /** Whether registration must fail when OpenViking account provisioning fails. */
+    private boolean provisioningRequired = true;
+
     /** HTTP 请求超时时间 */
     private Duration timeout = Duration.ofSeconds(10);
 

@@ -56,7 +56,7 @@ public class FlowLimitFilter extends HttpFilter {
     protected void doFilter(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws IOException, ServletException {
 
-        String address = request.getRemoteAddr();
+        String address = resolveClientAddress(request);
         String blockKey = Const.FLOW_LIMIT_BLOCK + address;
 
         // 1. 检查是否已被封禁
@@ -86,5 +86,31 @@ public class FlowLimitFilter extends HttpFilter {
         PrintWriter writer = response.getWriter();
         writer.write(objectMapper.writeValueAsString(
                 RestBean.failure(429, "请求频率过快，请稍后再试")));
+    }
+
+    String resolveClientAddress(HttpServletRequest request) {
+        String forwardedFor = firstHeaderValue(request.getHeader("X-Forwarded-For"));
+        if (forwardedFor != null) {
+            return forwardedFor;
+        }
+
+        String realIp = firstHeaderValue(request.getHeader("X-Real-IP"));
+        if (realIp != null) {
+            return realIp;
+        }
+
+        return request.getRemoteAddr();
+    }
+
+    private String firstHeaderValue(String header) {
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+
+        String first = header.split(",", 2)[0].trim();
+        if (first.isEmpty() || "unknown".equalsIgnoreCase(first)) {
+            return null;
+        }
+        return first;
     }
 }

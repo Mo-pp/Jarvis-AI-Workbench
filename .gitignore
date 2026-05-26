@@ -2,10 +2,14 @@
 target/
 *.class
 *.jar
+*.zip
+.m2repo/
+.tmp-*/
 
 # Logs
 logs/
 *.log
+*.log.*
 
 # Local configuration and secrets
 src/main/resources/application-local.yml
@@ -14,6 +18,8 @@ docs/
 .env
 .env.*
 !.env.example
+!.env.deploy.example
+!.env.server.example
 jarvis-frontend/.env
 jarvis-frontend/.env.*
 !jarvis-frontend/.env.example
