@@ -3,11 +3,14 @@ package com.msz.resume.ai.chat.runtime.node.inner.strategy;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
+import com.msz.resume.ai.chat.runtime.trace.TraceService;
+import com.msz.resume.ai.chat.runtime.trace.langfuse.LangfuseTracingService;
 import com.msz.resume.ai.chat.tooling.dto.QuestionDto;
 import com.msz.resume.ai.chat.tooling.AskUserQuestionParser;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -42,10 +45,21 @@ public class AskUserQuestionStrategy implements ToolExecutionStrategy {
     private static final String TOOL_NAME_QUESTIONNAIRE = "askQuestionnaire";
 
     private final AskUserQuestionParser askUserQuestionParser;
+    private final TraceService traceService;
+    private final LangfuseTracingService langfuseTracingService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public AskUserQuestionStrategy(AskUserQuestionParser askUserQuestionParser) {
+        this(askUserQuestionParser, null, null);
+    }
+
+    @Autowired
+    public AskUserQuestionStrategy(AskUserQuestionParser askUserQuestionParser,
+                                   TraceService traceService,
+                                   LangfuseTracingService langfuseTracingService) {
         this.askUserQuestionParser = askUserQuestionParser;
+        this.traceService = traceService;
+        this.langfuseTracingService = langfuseTracingService;
     }
 
     @Override
@@ -80,45 +94,45 @@ public class AskUserQuestionStrategy implements ToolExecutionStrategy {
 
             if (questions.isEmpty()) {
                 log.warn("[AskUserQuestionStrategy] 问题解析失败，无有效问题");
-                return ToolExecutionResult.builder()
+                return traceResult(context, ToolExecutionResult.builder()
                         .messages(resultMessagesForBatch(requests, askRequest, "问题解析失败，请检查参数格式"))
                         .contexts(requests)
                         .transition(ToolExecutionResult.TRANSITION_FAILED)
                         .discoveredTools(state.getDiscoveredTools())
-                        .build();
+                        .build());
             }
 
             if (isResumeExportConfirmationOnly(questions)) {
                 log.info("[AskUserQuestionStrategy] 阻止导出二次确认，要求 LLM 交给工作台导出按钮");
                 String message = "当前问题只是确认是否导出/下载简历。不要再调用 askUserQuestion/askQuestionnaire 追问导出确认，也不要把生成预览说成已经导出 PDF。简历生成或更新完成后，请返回明确的 type=resume artifact，让前端工作台自动打开预览、编辑和 AI 优化；PDF 导出由用户在工作台点击“导出 PDF”按钮触发。";
-                return ToolExecutionResult.builder()
+                return traceResult(context, ToolExecutionResult.builder()
                         .messages(resultMessagesForBatch(requests, askRequest, message))
                         .contexts(requests)
                         .transition(ToolExecutionResult.TRANSITION_SUCCESS)
                         .discoveredTools(state.getDiscoveredTools())
-                        .build();
+                        .build());
             }
 
             String artifactJson = buildQuestionnaireArtifact(askRequest, questions);
 
             log.info("[AskUserQuestionStrategy] questionnaire artifact 已生成: tool={}, questionsCount={}",
                     askRequest.name(), questions.size());
-            return ToolExecutionResult.builder()
+            return traceResult(context, ToolExecutionResult.builder()
                     .messages(resultMessagesForBatch(requests, askRequest, artifactJson))
                     .contexts(requests)
                     .transition(ToolExecutionResult.TRANSITION_ARTIFACT_READY)
                     .discoveredTools(state.getDiscoveredTools())
-                    .build();
+                    .build());
 
         } catch (Exception e) {
             log.error("[AskUserQuestionStrategy] AskUserQuestion 处理失败", e);
-            return ToolExecutionResult.builder()
+            return traceResult(context, ToolExecutionResult.builder()
                     .messages(resultMessagesForBatch(requests, askRequest,
                             "AskUserQuestion 处理失败: " + e.getMessage()))
                     .contexts(requests)
                     .transition(ToolExecutionResult.TRANSITION_FAILED)
                     .discoveredTools(state.getDiscoveredTools())
-                    .build();
+                    .build());
         }
     }
 
@@ -257,6 +271,66 @@ public class AskUserQuestionStrategy implements ToolExecutionStrategy {
             }
         }
         return false;
+    }
+
+    private ToolExecutionResult traceResult(ToolExecutionContext context, ToolExecutionResult result) {
+        if (context == null || context.traceContext() == null || context.agentDescriptor() == null || result == null) {
+            return result;
+        }
+
+        List<ToolExecutionRequest> tracedRequests = result.contexts() != null
+                ? result.contexts()
+                : context.requests();
+        if (tracedRequests == null || tracedRequests.isEmpty()) {
+            return result;
+        }
+
+        boolean failed = ToolExecutionResult.TRANSITION_FAILED.equals(result.transition());
+        Map<String, String> resultTextById = resultTextById(result.messages());
+        for (ToolExecutionRequest request : tracedRequests) {
+            if (request == null) {
+                continue;
+            }
+            String output = resultTextById.getOrDefault(safeToolId(request), "");
+            if (traceService != null) {
+                traceService.startToolCall(context.traceContext(), context.agentDescriptor(), request);
+            }
+            if (langfuseTracingService != null) {
+                langfuseTracingService.recordToolResult(
+                        context.traceContext(),
+                        request,
+                        failed ? null : output,
+                        failed ? "failed" : "success",
+                        failed ? output : null
+                );
+            }
+            if (traceService != null) {
+                if (failed) {
+                    traceService.failToolCall(context.traceContext(), context.agentDescriptor(), request);
+                } else {
+                    traceService.completeToolCall(context.traceContext(), context.agentDescriptor(), request);
+                }
+            }
+        }
+        return result;
+    }
+
+    private Map<String, String> resultTextById(List<ToolExecutionResultMessage> messages) {
+        Map<String, String> resultTextById = new LinkedHashMap<>();
+        if (messages == null) {
+            return resultTextById;
+        }
+        for (ToolExecutionResultMessage message : messages) {
+            if (message == null || message.id() == null || message.id().isBlank()) {
+                continue;
+            }
+            resultTextById.put(message.id(), message.text());
+        }
+        return resultTextById;
+    }
+
+    private String safeToolId(ToolExecutionRequest request) {
+        return request.id() != null ? request.id() : "";
     }
 
     /**

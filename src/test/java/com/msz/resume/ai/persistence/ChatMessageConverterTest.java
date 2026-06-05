@@ -3,19 +3,29 @@ package com.msz.resume.ai.chat.session;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.msz.resume.ai.chat.session.converter.ChatMessageConverter;
 import com.msz.resume.ai.chat.session.entity.MessageRecord;
+import com.msz.resume.ai.file.dto.ParsedFile;
+import com.msz.resume.ai.file.service.FileStorageService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.Content;
+import dev.langchain4j.data.message.ImageContent;
+import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * ChatMessageConverter 单元测试
@@ -24,11 +34,13 @@ import static org.junit.jupiter.api.Assertions.*;
 class ChatMessageConverterTest {
 
     private ChatMessageConverter messageConverter;
+    private FileStorageService fileStorageService;
 
     @BeforeEach
     void setUp() {
         ObjectMapper objectMapper = new ObjectMapper();
-        messageConverter = new ChatMessageConverter(objectMapper);
+        fileStorageService = mock(FileStorageService.class);
+        messageConverter = new ChatMessageConverter(objectMapper, fileStorageService);
     }
 
     @Test
@@ -55,6 +67,95 @@ class ChatMessageConverterTest {
         assertEquals(1, restoredMessages.size());
         assertTrue(restoredMessages.get(0) instanceof UserMessage);
         assertEquals(userContent, ((UserMessage) restoredMessages.get(0)).singleText());
+    }
+
+    @Test
+    @DisplayName("UserMessage 图片内容序列化时只保存附件 metadata")
+    void testUserMessageWithImageConversion() {
+        String sessionId = UUID.randomUUID().toString();
+        UserMessage message = UserMessage.from(List.of(
+                TextContent.from("请看这张图"),
+                ImageContent.from("aGVsbG8=", "image/png")
+        ));
+
+        List<MessageRecord> dbMessages = messageConverter.toMessageRecordList(sessionId, List.of(message));
+
+        assertEquals(1, dbMessages.size());
+        MessageRecord record = dbMessages.get(0);
+        assertEquals("USER", record.getMessageType());
+        assertEquals("请看这张图", record.getContent());
+        assertNotNull(record.getAttachmentsJson());
+        assertFalse(record.getAttachmentsJson().contains("aGVsbG8="));
+
+        List<ChatMessage> restoredMessages = messageConverter.toChatMessageList(dbMessages);
+        assertEquals(1, restoredMessages.size());
+        assertTrue(restoredMessages.get(0) instanceof UserMessage);
+    }
+
+    @Test
+    @DisplayName("UserMessage 图片 metadata 恢复时 Redis 未过期则重建 ImageContent")
+    void testUserMessageWithImageRestoresImageContentWhenRedisAvailable() {
+        String sessionId = UUID.randomUUID().toString();
+        String fileId = "image-123";
+        ParsedFile parsedFile = ParsedFile.builder()
+                .fileId(fileId)
+                .fileName("screen.png")
+                .fileType("png")
+                .fileKind("image")
+                .mimeType("image/png")
+                .fileSize(5L)
+                .base64Data("aGVsbG8=")
+                .parsedAt(Instant.now())
+                .success(true)
+                .build();
+        when(fileStorageService.get(fileId)).thenReturn(Optional.of(parsedFile));
+
+        UserMessage message = UserMessage.builder()
+                .contents(List.of(
+                        TextContent.from("请描述这张图"),
+                        ImageContent.from("aGVsbG8=", "image/png")
+                ))
+                .attributes(Map.of("attachments", List.of(Map.of(
+                        "fileId", fileId,
+                        "fileName", "screen.png",
+                        "fileType", "png",
+                        "fileKind", "image",
+                        "mimeType", "image/png",
+                        "fileSize", 5L,
+                        "available", true
+                ))))
+                .build();
+
+        List<MessageRecord> dbMessages = messageConverter.toMessageRecordList(sessionId, List.of(message));
+        assertFalse(dbMessages.getFirst().getAttachmentsJson().contains("aGVsbG8="));
+
+        UserMessage restored = (UserMessage) messageConverter.toChatMessage(dbMessages.getFirst());
+        List<Content> contents = restored.contents();
+        assertEquals(2, contents.size());
+        assertTrue(contents.get(0) instanceof TextContent);
+        assertTrue(contents.get(1) instanceof ImageContent);
+        ImageContent imageContent = (ImageContent) contents.get(1);
+        assertEquals("aGVsbG8=", imageContent.image().base64Data());
+        assertEquals("image/png", imageContent.image().mimeType());
+    }
+
+    @Test
+    @DisplayName("UserMessage 图片 metadata 恢复时 Redis 过期则降级为文本摘要")
+    void testUserMessageWithExpiredImageRestoresTextSummary() {
+        String sessionId = UUID.randomUUID().toString();
+        String fileId = "expired-image";
+        when(fileStorageService.get(fileId)).thenReturn(Optional.empty());
+
+        MessageRecord record = new MessageRecord();
+        record.setSessionId(sessionId);
+        record.setMessageType("USER");
+        record.setContent("请看图");
+        record.setAttachmentsJson("""
+                [{"fileId":"expired-image","fileName":"old.png","fileType":"png","fileKind":"image","mimeType":"image/png","fileSize":5,"available":true}]
+                """);
+
+        UserMessage restored = (UserMessage) messageConverter.toChatMessage(record);
+        assertEquals("请看图\n[图片: old.png]", restored.singleText());
     }
 
     @Test

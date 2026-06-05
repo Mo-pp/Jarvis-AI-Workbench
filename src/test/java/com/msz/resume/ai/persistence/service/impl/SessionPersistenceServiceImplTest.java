@@ -2,14 +2,19 @@ package com.msz.resume.ai.chat.session.service.impl;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.msz.resume.ai.chat.compression.model.LlmContextCheckpoint;
 import com.msz.resume.ai.chat.session.converter.ChatMessageConverter;
+import com.msz.resume.ai.chat.session.entity.AiContextCheckpoint;
 import com.msz.resume.ai.chat.session.entity.AiSession;
 import com.msz.resume.ai.chat.session.entity.MessageRecord;
 import com.msz.resume.ai.chat.session.entity.TimelineActionRecord;
+import com.msz.resume.ai.chat.session.mapper.AiContextCheckpointMapper;
 import com.msz.resume.ai.chat.session.mapper.AiSessionMapper;
 import com.msz.resume.ai.chat.session.mapper.MessageRecordMapper;
 import com.msz.resume.ai.chat.session.mapper.TimelineActionRecordMapper;
 import com.msz.resume.ai.chat.session.model.SessionSnapshot;
+import com.msz.resume.ai.chat.session.service.LlmContextCheckpointService;
+import com.msz.resume.ai.file.service.FileStorageService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -27,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
 
 class SessionPersistenceServiceImplTest {
 
@@ -34,15 +40,24 @@ class SessionPersistenceServiceImplTest {
     private final Map<String, AiSession> sessions = new HashMap<>();
     private final Map<String, List<MessageRecord>> messagesBySession = new HashMap<>();
     private final Map<String, List<TimelineActionRecord>> actionsBySession = new HashMap<>();
+    private final Map<String, AiContextCheckpoint> checkpointsBySession = new HashMap<>();
     private int deletedUiOnlyPendingCount = 0;
     private final AiSessionMapper sessionMapper = mapperProxy(AiSessionMapper.class, this::handleSessionMapper);
     private final MessageRecordMapper messageMapper = mapperProxy(MessageRecordMapper.class, this::handleMessageMapper);
     private final TimelineActionRecordMapper timelineActionMapper = mapperProxy(TimelineActionRecordMapper.class, this::handleTimelineActionMapper);
+    private final AiContextCheckpointMapper checkpointMapper = mapperProxy(AiContextCheckpointMapper.class, this::handleCheckpointMapper);
+    private final ChatMessageConverter messageConverter = new ChatMessageConverter(objectMapper, mock(FileStorageService.class));
+    private final LlmContextCheckpointService checkpointService = new LlmContextCheckpointService(
+            checkpointMapper,
+            messageConverter,
+            objectMapper
+    );
     private final SessionPersistenceServiceImpl service = new SessionPersistenceServiceImpl(
             sessionMapper,
             messageMapper,
             timelineActionMapper,
-            new ChatMessageConverter(objectMapper),
+            messageConverter,
+            checkpointService,
             objectMapper
     );
 
@@ -194,6 +209,73 @@ class SessionPersistenceServiceImplTest {
     }
 
     @Test
+    @DisplayName("完整持久化会保存 LLM context checkpoint 且不写入消息历史")
+    void completeRoundPersistsLlmContextCheckpointSeparately() {
+        String sessionId = "session-checkpoint-save";
+        sessions.put(sessionId, activeSession(sessionId));
+        messagesBySession.put(sessionId, List.of());
+
+        Map<String, Object> innerData = new HashMap<>();
+        innerData.put(com.msz.resume.ai.chat.runtime.state.QueryLoopState.LLM_CONTEXT_CHECKPOINT,
+                new LlmContextCheckpoint(
+                        2,
+                        4,
+                        List.of(dev.langchain4j.data.message.UserMessage.from("[对话历史摘要]\n旧历史")),
+                        90000,
+                        5000
+                ));
+        com.msz.resume.ai.chat.runtime.state.QueryLoopState innerState =
+                new com.msz.resume.ai.chat.runtime.state.QueryLoopState(innerData);
+        Map<String, Object> stateData = new HashMap<>();
+        stateData.put(com.msz.resume.ai.chat.runtime.state.SessionState.SESSION_ID, sessionId);
+        stateData.put(com.msz.resume.ai.chat.runtime.state.SessionState.IS_ACTIVE, true);
+        stateData.put(com.msz.resume.ai.chat.runtime.state.SessionState.INNER_STATE, innerState);
+
+        service.completeRound(
+                sessionId,
+                "test-user",
+                new com.msz.resume.ai.chat.runtime.state.SessionState(stateData),
+                List.of(dev.langchain4j.data.message.AiMessage.aiMessage("完成")),
+                List.of()
+        );
+
+        assertEquals(1, messagesBySession.get(sessionId).size());
+        AiContextCheckpoint checkpoint = checkpointsBySession.get(sessionId);
+        assertNotNull(checkpoint);
+        assertEquals(2, checkpoint.getTailStartIndex());
+        assertEquals(4, checkpoint.getSourceMessageCount());
+    }
+
+    @Test
+    @DisplayName("恢复会话会加载 LLM context checkpoint")
+    void restoreSessionLoadsLlmContextCheckpoint() throws JsonProcessingException {
+        String sessionId = "session-checkpoint-load";
+        sessions.put(sessionId, activeSession(sessionId));
+        actionsBySession.put(sessionId, List.of());
+        messagesBySession.put(sessionId, List.of(aiMessage(sessionId, 1L, "原始历史")));
+
+        AiContextCheckpoint entity = new AiContextCheckpoint();
+        entity.setSessionId(sessionId);
+        entity.setTailStartIndex(1);
+        entity.setSourceMessageCount(2);
+        entity.setSummaryMessagesJson(objectMapper.writeValueAsString(
+                messageConverter.toMessageRecordList(sessionId,
+                        List.of(dev.langchain4j.data.message.UserMessage.from("[摘要]")))
+        ));
+        entity.setOriginalTokens(90000);
+        entity.setCompactedTokens(4000);
+        checkpointsBySession.put(sessionId, entity);
+
+        SessionSnapshot snapshot = service.restoreSession(sessionId, "test-user");
+
+        assertNotNull(snapshot);
+        LlmContextCheckpoint checkpoint = snapshot.state().getInnerState().getLlmContextCheckpoint();
+        assertTrue(checkpoint.hasSummary());
+        assertEquals(1, checkpoint.tailStartIndex());
+        assertEquals(1, checkpoint.summaryMessages().size());
+    }
+
+    @Test
     @DisplayName("只持久化 pending timeline action 会先清理旧的 UI-only pending")
     void persistTimelineActionsDeletesPreviousUiOnlyPendingTimelineAction() {
         String sessionId = "session-replaces-pending-action";
@@ -238,6 +320,17 @@ class SessionPersistenceServiceImplTest {
         return switch (method.getName()) {
             case "selectBySessionId" -> messagesBySession.getOrDefault(String.valueOf(args[0]), List.of());
             case "countBySessionId" -> messagesBySession.getOrDefault(String.valueOf(args[0]), List.of()).size();
+            case "insertBatch" -> {
+                @SuppressWarnings("unchecked")
+                List<MessageRecord> records = (List<MessageRecord>) args[0];
+                records.forEach(record -> {
+                    List<MessageRecord> existing = messagesBySession.getOrDefault(record.getSessionId(), List.of());
+                    List<MessageRecord> updated = new ArrayList<>(existing);
+                    updated.add(record);
+                    messagesBySession.put(record.getSessionId(), updated);
+                });
+                yield null;
+            }
             default -> defaultValue(method.getReturnType());
         };
     }
@@ -259,6 +352,18 @@ class SessionPersistenceServiceImplTest {
                     byActionId.put(record.getActionId(), record);
                     actionsBySession.put(record.getSessionId(), new ArrayList<>(byActionId.values()));
                 });
+                yield null;
+            }
+            default -> defaultValue(method.getReturnType());
+        };
+    }
+
+    private Object handleCheckpointMapper(Object proxy, Method method, Object[] args) {
+        return switch (method.getName()) {
+            case "selectBySessionId" -> checkpointsBySession.get(String.valueOf(args[0]));
+            case "upsert" -> {
+                AiContextCheckpoint checkpoint = (AiContextCheckpoint) args[0];
+                checkpointsBySession.put(checkpoint.getSessionId(), checkpoint);
                 yield null;
             }
             default -> defaultValue(method.getReturnType());

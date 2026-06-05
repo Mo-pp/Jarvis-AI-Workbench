@@ -13,6 +13,7 @@ import com.msz.resume.ai.chat.session.mapper.TimelineActionRecordMapper;
 import com.msz.resume.ai.chat.session.model.HistoryMessage;
 import com.msz.resume.ai.chat.session.model.SessionSnapshot;
 import com.msz.resume.ai.chat.session.model.SessionSummary;
+import com.msz.resume.ai.chat.session.service.LlmContextCheckpointService;
 import com.msz.resume.ai.chat.session.service.SessionPersistenceService;
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
 import com.msz.resume.ai.chat.runtime.state.SessionState;
@@ -47,6 +48,7 @@ public class SessionPersistenceServiceImpl implements SessionPersistenceService 
     private final MessageRecordMapper messageMapper;
     private final TimelineActionRecordMapper timelineActionMapper;
     private final ChatMessageConverter messageConverter;
+    private final LlmContextCheckpointService checkpointService;
     private final ObjectMapper objectMapper;
     private static final int UI_ONLY_ANCHOR_INDEX = -1;
     private static final TypeReference<List<Map<String, Object>>> TASK_PLAN_TYPE = new TypeReference<>() {};
@@ -59,11 +61,13 @@ public class SessionPersistenceServiceImpl implements SessionPersistenceService 
                                          MessageRecordMapper messageMapper,
                                          TimelineActionRecordMapper timelineActionMapper,
                                          ChatMessageConverter messageConverter,
+                                         LlmContextCheckpointService checkpointService,
                                          ObjectMapper objectMapper) {
         this.sessionMapper = sessionMapper;
         this.messageMapper = messageMapper;
         this.timelineActionMapper = timelineActionMapper;
         this.messageConverter = messageConverter;
+        this.checkpointService = checkpointService;
         this.objectMapper = objectMapper;
     }
 
@@ -124,6 +128,11 @@ public class SessionPersistenceServiceImpl implements SessionPersistenceService 
 
         timelineActionMapper.deleteUiOnlyPendingBySessionId(sessionId);
         saveTimelineActions(sessionId, anchorMessageIndex, timelineActions);
+
+        QueryLoopState innerState = state.getInnerState();
+        if (innerState != null) {
+            checkpointService.save(sessionId, innerState.getLlmContextCheckpoint());
+        }
     }
 
     @Override
@@ -254,7 +263,7 @@ public class SessionPersistenceServiceImpl implements SessionPersistenceService 
         data.put(SessionState.IS_ACTIVE, "active".equalsIgnoreCase(session.getStatus()));
         data.put(SessionState.TOTAL_INPUT_TOKENS, session.getTotalInputTokens());
         data.put(SessionState.TOTAL_OUTPUT_TOKENS, session.getTotalOutputTokens());
-        data.put(SessionState.INNER_STATE, buildRestoredInnerState(messages));
+        data.put(SessionState.INNER_STATE, buildRestoredInnerState(session.getSessionId(), messages));
 
         if (session.getCreatedAt() != null) {
             data.put(SessionState.CREATED_AT, localDateTimeToInstant(session.getCreatedAt()));
@@ -267,9 +276,13 @@ public class SessionPersistenceServiceImpl implements SessionPersistenceService 
     }
 
     /** 构建恢复后的内层状态QueryLoopState，提取最新任务计划 */
-    private QueryLoopState buildRestoredInnerState(List<ChatMessage> messages) {
+    private QueryLoopState buildRestoredInnerState(String sessionId, List<ChatMessage> messages) {
         HashMap<String, Object> innerData = new HashMap<>();
         innerData.put(QueryLoopState.TASK_PLAN, extractLatestTaskPlan(messages));
+        var checkpoint = checkpointService.load(sessionId);
+        if (checkpoint != null) {
+            innerData.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, checkpoint);
+        }
         return new QueryLoopState(innerData);
     }
 

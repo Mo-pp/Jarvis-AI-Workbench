@@ -30,8 +30,17 @@ public record PipelineResult(
     boolean wasCompressed,
     int originalTokens,
     int finalTokens,
-    List<String> executedLevels
+    List<String> executedLevels,
+    LlmContextCheckpoint checkpoint
 ) {
+
+    public PipelineResult(List<ChatMessage> messages,
+                          boolean wasCompressed,
+                          int originalTokens,
+                          int finalTokens,
+                          List<String> executedLevels) {
+        this(messages, wasCompressed, originalTokens, finalTokens, executedLevels, null);
+    }
 
     /**
      * 创建未改变的结果（消息原样保留）
@@ -41,7 +50,7 @@ public record PipelineResult(
      * @return PipelineResult，wasCompressed=false
      */
     public static PipelineResult unchanged(List<ChatMessage> messages, int tokens) {
-        return new PipelineResult(messages, false, tokens, tokens, List.of());
+        return new PipelineResult(messages, false, tokens, tokens, List.of(), null);
     }
 
     /**

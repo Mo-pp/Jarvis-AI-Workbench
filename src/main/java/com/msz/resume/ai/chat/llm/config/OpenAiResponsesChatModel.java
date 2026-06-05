@@ -160,8 +160,10 @@ class OpenAiResponsesChatModel implements ChatModel {
         HttpClientBuilder httpClientBuilder =
                 getOrDefault(builder.httpClientBuilder, HttpClientBuilderLoader::loadHttpClientBuilder);
         HttpClient delegate = httpClientBuilder.build();
-        if (builder.logRequests || builder.logResponses) {
-            this.httpClient = new LoggingHttpClient(delegate, builder.logRequests, builder.logResponses);
+        boolean logRequests = Boolean.TRUE.equals(builder.logRequests);
+        boolean logResponses = Boolean.TRUE.equals(builder.logResponses);
+        if (logRequests || logResponses) {
+            this.httpClient = new LoggingHttpClient(delegate, logRequests, logResponses);
         } else {
             this.httpClient = delegate;
         }

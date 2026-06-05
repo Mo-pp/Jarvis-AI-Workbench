@@ -98,10 +98,28 @@ public class ResumeOptimizeGuideTool {
             #### 5. 标注亮点
             指出简历中应该**重点突出**的内容，帮助求职者扬长避短。
 
+            #### 5.5 按评分标准优化（必须主动贴近）
+            优化目标不只是“语言更好”，而是提高 evaluateResume 的简历质量评分和 JD 匹配评分：
+            - 内容繁简适中：删掉泛泛职责、重复技能、低价值堆砌；补足过短、过空、缺少上下文的经历。
+            - 结果/影响导向：把“实现了某功能”改成“解决了什么问题 + 用什么关键技术 + 带来什么指标/业务结果”。
+            - 学历维度：用户已提供学历、学校、专业、GPA、排名、主修课程时不要丢失，必要时整理得更清晰。
+            - 链接加分：用户已提供 GitHub、Demo、项目地址、博客、作品集时必须保留，并放在面试官容易看到的位置。
+            - 技术牛逼度：真实经历中的算法、高并发、分布式、性能优化、AI/RAG/Agent、复杂工程治理等要提炼为项目亮点。
+            - 有 JD 时：优化后的简历必须围绕 JD 的必备技能、经验要求、业务场景和加分项调整表达；JD 相关性至少按 40% 以上重要性处理，本系统评分中固定为 45%。
+
+            #### 6. 一页简历约束
+            默认把 optimizedResume 控制为 A4 单页友好的内容密度；普通经历每段保留 2-4 个最高价值 bullet，优先删除重复、空泛、低技术含量描述。
+            bullet 推荐写成 `模块亮点：基于 xxx，采用 xxx，实现 xxx，提升/降低 xxx%`，让前端模板能把冒号前小标题高亮。
+            对关键技术、核心指标、延迟/成本/命中率/采纳率等重点使用 `**...**` 标记，便于前端模板加粗。
+            如果候选人内容确实很强且无法压缩到 1 页，在发布 2 页版本前必须调用 AskUserQuestionTool 询问用户是否允许；未获确认时继续压缩为 1 页。
+
             ### 输出格式
             - 如果用户的目标是“优化简历”“生成优化结果到工作台”“顺便给我可编辑的优化版本”，优先产出 workbench artifact，而不是先给冗长 prose。
             优先调用 publishArtifact，并传入结构化参数：type="optimize_result"，optimizeResult={...}。不要把完整 JSON 再包进字符串参数。
             - 如果你已经生成了优化后的完整简历，尽量把它放进 optimizedResume 字段，避免只给分析不给可落地结果。
+            - publishArtifact 成功后本轮会结束；如果需要评分，应在同一批工具调用中先调用 publishArtifact 发布 optimize_result，再调用 evaluateResume。不要计划先等 evaluateResume 返回后再发布 optimize_result。
+            - 调用 evaluateResume 时生成新版 evaluation。参数 originalResumeText 使用用户原始简历提取文本，generatedResume 使用 optimizedResume 或当前工作台预览简历。
+            - 只有用户明确提供 JD、岗位要求或当前优化请求包含 JD 时，才把 jobDescription 传给 evaluateResume 并生成 JD 匹配度；没有 JD 时必须走无 JD 简历评价链路，不要默认给 JD 匹配分。
             如果当前无法调用 publishArtifact，则最终只输出严格 JSON 对象本身。
             必须输出 JSON 格式，最外层固定为 {"type":"optimize_result", ...}，包含以下字段：
             - type：固定为 "optimize_result"
@@ -110,6 +128,7 @@ public class ResumeOptimizeGuideTool {
             - suggestions：优化建议列表
             - highlights：建议突出的亮点
             - optimizedResume：可选，优化后的完整简历对象
+            - evaluation：可选，新版简历评价与 JD 匹配度评分结果；若 evaluateResume 已返回结果，应放入该字段或单独发布 resume_evaluation artifact
             - 最终 JSON 必须严格合法：不要包裹 Markdown 代码块，不要添加说明文字；字符串内部如需英文双引号，必须转义为 \\"，或改用中文引号“”。
 
             完整示例：

@@ -4,6 +4,7 @@ import com.msz.resume.ai.chat.compression.model.AutocompactResult;
 import com.msz.resume.ai.chat.compression.model.BudgetResult;
 import com.msz.resume.ai.chat.compression.model.CollapseResult;
 import com.msz.resume.ai.chat.compression.model.CompactResult;
+import com.msz.resume.ai.chat.compression.model.LlmContextCheckpoint;
 import com.msz.resume.ai.chat.compression.model.PipelineResult;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
@@ -90,6 +91,7 @@ public class DefaultMessagePreprocessingPipeline implements MessagePreprocessing
         List<ChatMessage> currentMessages = messages;
         List<String> executedLevels = new ArrayList<>();// 执行层级列表
         int currentTokens = originalTokens;
+        LlmContextCheckpoint checkpoint = null;
 
         // 3. L1: Tool Result Budget
         PipelineResult l1Result = applyL1(currentMessages, sessionId);
@@ -152,6 +154,13 @@ public class DefaultMessagePreprocessingPipeline implements MessagePreprocessing
                     currentMessages = l5Result.messages();
                     executedLevels.add("L5");
                     currentTokens = l5Result.compactedTokens();
+                    checkpoint = new LlmContextCheckpoint(
+                            l5Result.splitIndex(),
+                            messages.size(),
+                            l5Result.summaryPrefixMessages(),
+                            l5Result.originalTokens(),
+                            l5Result.compactedTokens()
+                    );
                     log.info("[Pipeline] L5 完成，tokens: {}", currentTokens);
                 } else {
                     log.warn("[Pipeline] L5 失败: {}", l5Result.errorMessage());
@@ -170,7 +179,7 @@ public class DefaultMessagePreprocessingPipeline implements MessagePreprocessing
                     executedLevels, originalTokens, finalTokens);
         }
 
-        return new PipelineResult(currentMessages, wasCompressed, originalTokens, finalTokens, executedLevels);
+        return new PipelineResult(currentMessages, wasCompressed, originalTokens, finalTokens, executedLevels, checkpoint);
     }
 
     @Override

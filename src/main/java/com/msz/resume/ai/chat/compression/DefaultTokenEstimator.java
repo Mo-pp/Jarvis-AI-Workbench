@@ -1,5 +1,6 @@
 package com.msz.resume.ai.chat.compression;
 
+import com.msz.resume.ai.chat.session.converter.ChatMessageTextExtractor;
 import dev.langchain4j.data.message.ChatMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -132,6 +133,11 @@ public class DefaultTokenEstimator implements TokenEstimator {
      * @return 文本内容
      */
     private String extractText(ChatMessage message) {
+        String extracted = ChatMessageTextExtractor.extract(message);
+        if (extracted != null && !extracted.isEmpty()) {
+            return extracted;
+        }
+
         // 不同消息类型有不同的文本提取方式
         try {
             // 尝试调用 text() 方法（适用于 ToolExecutionResultMessage, AiMessage 等）

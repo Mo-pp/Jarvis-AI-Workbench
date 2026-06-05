@@ -48,7 +48,8 @@ public class ToolActionEventService {
     private static final Set<String> SAFE_PREVIEW_KEYS = Set.of(
             "uri", "targetUri", "query", "pattern", "level", "limit", "nodeLimit", "caseInsensitive",
             "toolName", "tasksJson", "taskId", "newStatus", "description", "detail", "type", "title",
-            "artifactType", "name", "path", "maxTurns", "subagentType", "allowedTools", "memoryKey", "preferenceKey"
+            "artifactType", "name", "path", "maxTurns", "subagentType", "allowedTools", "memoryKey", "preferenceKey",
+            "scenario", "city", "expenseTypes", "preset", "employeeName", "department", "tripPurpose", "approver"
     );
 
     private static final int MAX_PREVIEW_VALUE_CHARS = 160;
@@ -138,6 +139,11 @@ public class ToolActionEventService {
         );
     }
 
+    /** 测试专用入口：复用生产摘要逻辑，不依赖真实 SSE 上下文。 */
+    String summarizeResultForTest(String toolName, String result) {
+        return summarizeResult(toolName, result);
+    }
+
     /** 判断当前工具事件是否值得向用户发布。 */
     private boolean shouldPublish(ChatRunTraceContext traceContext, ToolExecutionRequest request) {
         return traceContext != null
@@ -215,6 +221,10 @@ public class ToolActionEventService {
             case "rememberUserMemory" -> "记录用户记忆";
             case "readUserMemory" -> "读取用户记忆";
             case "readUserMemoryDetail" -> "读取记忆详情";
+            case "searchExpensePolicy" -> "查询报销制度";
+            case "parseExpenseAttachment" -> "解析报销材料";
+            case "checkExpenseRules" -> "校验报销规则";
+            case "createExpenseDraft" -> "创建 OA 草稿";
             default -> toolName;
         };
     }
@@ -242,6 +252,7 @@ public class ToolActionEventService {
             case "getResumeGuide", "getOptimizeGuide", "publishArtifact" -> "artifact_work";
             case "toolSearch" -> "tool_discovery";
             case "rememberUserPreference", "rememberUserMemory", "readUserMemory", "readUserMemoryDetail" -> "user_memory";
+            case "searchExpensePolicy", "parseExpenseAttachment", "checkExpenseRules", "createExpenseDraft" -> "expense_demo";
             case "openviking_skill_search", "openviking_skill_read", "openviking_skill_files",
                  "openviking_skill_read_file", "openviking_skill_add" -> "skill";
             default -> toolName;
@@ -260,6 +271,7 @@ public class ToolActionEventService {
             case "artifact_work" -> "准备工作台产物";
             case "tool_discovery" -> "发现可用工具";
             case "user_memory" -> "处理用户记忆";
+            case "expense_demo" -> "处理企业报销流程";
             case "skill" -> "处理 Skill";
             default -> titleFor(toolName);
         };
@@ -278,6 +290,7 @@ public class ToolActionEventService {
                 case "artifact_work" -> "正在准备产物";
                 case "tool_discovery" -> "正在查找工具";
                 case "user_memory" -> "正在处理记忆";
+                case "expense_demo" -> "正在处理报销流程";
                 case "skill" -> "正在处理 Skill";
                 default -> "正在执行工具";
             };
@@ -298,6 +311,7 @@ public class ToolActionEventService {
             case "artifact_work" -> "产物准备完成";
             case "tool_discovery" -> "工具发现完成";
             case "user_memory" -> "记忆处理完成";
+            case "expense_demo" -> "报销流程处理完成";
             case "skill" -> "Skill 处理完成";
             default -> "工具执行完成";
         };
@@ -314,6 +328,7 @@ public class ToolActionEventService {
             case "getResumeGuide", "getOptimizeGuide", "publishArtifact" -> "artifact_work";
             case "toolSearch" -> stringValue(preview.get("toolName"));
             case "rememberUserPreference", "rememberUserMemory", "readUserMemory", "readUserMemoryDetail" -> "user_memory";
+            case "searchExpensePolicy", "parseExpenseAttachment", "checkExpenseRules", "createExpenseDraft" -> "expense_demo";
             case "openviking_skill_search", "openviking_skill_read", "openviking_skill_files",
                  "openviking_skill_read_file", "openviking_skill_add" -> skillScope(preview);
             default -> "";
@@ -350,6 +365,12 @@ public class ToolActionEventService {
             case "rememberUserMemory" -> "写入记忆：" + fallback(stringValue(preview.get("memoryKey")), "用户记忆");
             case "readUserMemory" -> "读取用户记忆";
             case "readUserMemoryDetail" -> "读取详情：" + fallback(stringValue(preview.get("memoryKey")), "用户记忆");
+            case "searchExpensePolicy" -> "场景：" + fallback(stringValue(preview.get("scenario")), "报销")
+                    + " · 城市：" + fallback(stringValue(preview.get("city")), "未指定");
+            case "parseExpenseAttachment" -> "材料来源：" + fallback(stringValue(preview.get("preset")), "用户材料");
+            case "checkExpenseRules" -> "对照制度校验票据和材料缺口";
+            case "createExpenseDraft" -> "申请人：" + fallback(stringValue(preview.get("employeeName")), "当前用户")
+                    + " · 部门：" + fallback(stringValue(preview.get("department")), "未填写");
             case "openviking_skill_search" -> "查询：" + fallback(stringValue(preview.get("query")), "Skill");
             case "openviking_skill_read" -> "读取 Skill：" + fallback(stringValue(preview.get("name")), "(未指定)");
             case "openviking_skill_files" -> "文件树：" + fallback(stringValue(preview.get("name")), "(未指定)");
@@ -540,6 +561,10 @@ public class ToolActionEventService {
             case "rememberUserMemory" -> "用户记忆已记录";
             case "readUserMemory" -> summarizeMemory(normalized, "用户记忆已读取");
             case "readUserMemoryDetail" -> summarizeMemory(normalized, "记忆详情已读取");
+            case "searchExpensePolicy" -> "报销制度已查询";
+            case "parseExpenseAttachment" -> summarizeExpenseAttachment(normalized);
+            case "checkExpenseRules" -> summarizeExpenseRules(normalized);
+            case "createExpenseDraft" -> summarizeExpenseDraft(normalized);
             case "openviking_skill_search" -> "Skill 检索完成";
             case "openviking_skill_read" -> "Skill 已读取";
             case "openviking_skill_files" -> "Skill 文件树已读取";
@@ -586,6 +611,53 @@ public class ToolActionEventService {
             return summarizeError(result);
         }
         return fallback;
+    }
+
+    /** 汇总报销材料解析结果，突出材料是否足够继续办理。 */
+    private String summarizeExpenseAttachment(String result) {
+        try {
+            JsonNode root = objectMapper.readTree(result);
+            if ("needs_user_input".equals(root.path("status").asText())) {
+                return "报销材料不足，需要用户补充";
+            }
+            int itemCount = root.path("items").isArray() ? root.path("items").size() : 0;
+            String amount = root.path("totalAmount").asText("");
+            return itemCount > 0
+                    ? "已解析 " + itemCount + " 项费用" + (amount.isBlank() ? "" : "，合计 " + amount + " 元")
+                    : "报销材料已解析";
+        } catch (Exception ignored) {
+            return "报销材料已解析";
+        }
+    }
+
+    /** 汇总报销规则校验结果，突出是否需要人工复核。 */
+    private String summarizeExpenseRules(String result) {
+        try {
+            JsonNode root = objectMapper.readTree(result);
+            if ("needs_user_input".equals(root.path("status").asText())) {
+                return "缺少材料，暂不能校验报销规则";
+            }
+            String reimbursable = root.path("reimbursableAmount").asText("");
+            boolean needsManualReview = root.path("needsManualReview").asBoolean(false);
+            String summary = reimbursable.isBlank() ? "报销规则校验完成" : "建议可报销 " + reimbursable + " 元";
+            return needsManualReview ? summary + "，需人工复核" : summary;
+        } catch (Exception ignored) {
+            return "报销规则校验完成";
+        }
+    }
+
+    /** 汇总 Mock OA 草稿创建结果。 */
+    private String summarizeExpenseDraft(String result) {
+        try {
+            JsonNode root = objectMapper.readTree(result);
+            String draftId = root.path("draftId").asText("");
+            if (!draftId.isBlank()) {
+                return "Mock OA 草稿已创建：" + draftId;
+            }
+        } catch (Exception ignored) {
+            // Fall through.
+        }
+        return "Mock OA 草稿已创建";
     }
 
     /** 汇总 publishArtifact 的结果，把不同 artifact 类型翻译成清晰的交付说明。 */

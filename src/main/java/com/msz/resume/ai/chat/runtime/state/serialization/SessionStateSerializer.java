@@ -2,11 +2,16 @@ package com.msz.resume.ai.chat.runtime.state.serialization;
 
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
 import com.msz.resume.ai.chat.runtime.state.SessionState;
+import com.msz.resume.ai.chat.compression.model.LlmContextCheckpoint;
+import com.msz.resume.ai.chat.session.converter.ChatMessageTextExtractor;
 import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
 import com.msz.resume.ai.chat.prompt.model.UserProfile;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.Content;
+import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import org.bsc.langgraph4j.serializer.StateSerializer;
@@ -59,6 +64,15 @@ public class SessionStateSerializer extends StateSerializer<SessionState> {
             m.put("user", identity.user());
             m.put("agent", identity.agent());
             return m;
+        } else if (value instanceof LlmContextCheckpoint checkpoint) {
+            Map<String, Object> m = new HashMap<>();
+            m.put("@type", "LlmContextCheckpoint");
+            m.put("tailStartIndex", checkpoint.tailStartIndex());
+            m.put("sourceMessageCount", checkpoint.sourceMessageCount());
+            m.put("summaryMessages", toSerializable(checkpoint.summaryMessages()));
+            m.put("originalTokens", checkpoint.originalTokens());
+            m.put("compactedTokens", checkpoint.compactedTokens());
+            return m;
         } else if (value instanceof UserProfile ctx) {
             Map<String, Object> m = new HashMap<>();
             m.put("@type", "UserProfile");
@@ -81,7 +95,28 @@ public class SessionStateSerializer extends StateSerializer<SessionState> {
         } else if (value instanceof UserMessage msg) {
             Map<String, Object> m = new HashMap<>();
             m.put("@type", "UserMessage");
-            m.put("text", msg.singleText());
+            m.put("text", ChatMessageTextExtractor.userText(msg));
+            if (!msg.hasSingleText()) {
+                List<Map<String, Object>> contents = new ArrayList<>();
+                for (Content content : msg.contents()) {
+                    if (content instanceof TextContent textContent) {
+                        Map<String, Object> item = new HashMap<>();
+                        item.put("type", "text");
+                        item.put("text", textContent.text());
+                        contents.add(item);
+                    } else if (content instanceof ImageContent imageContent) {
+                        Map<String, Object> item = new HashMap<>();
+                        item.put("type", "image");
+                        item.put("base64Data", imageContent.image().base64Data());
+                        item.put("mimeType", imageContent.image().mimeType());
+                        contents.add(item);
+                    }
+                }
+                m.put("contents", contents);
+            }
+            if (msg.attributes() != null && !msg.attributes().isEmpty()) {
+                m.put("attributes", toSerializable(msg.attributes()));
+            }
             return m;
         } else if (value instanceof AiMessage msg) {
             Map<String, Object> m = new HashMap<>();
@@ -146,6 +181,13 @@ public class SessionStateSerializer extends StateSerializer<SessionState> {
                             (String) map.get("user"),
                             (String) map.get("agent")
                     );
+                    case "LlmContextCheckpoint" -> new LlmContextCheckpoint(
+                            intValue(map.get("tailStartIndex")),
+                            intValue(map.get("sourceMessageCount")),
+                            (List<dev.langchain4j.data.message.ChatMessage>) fromSerializable(map.get("summaryMessages")),
+                            intValue(map.get("originalTokens")),
+                            intValue(map.get("compactedTokens"))
+                    );
                     case "UserProfile" -> UserProfile.builder()
                             .userId((String) map.get("userId"))
                             .username((String) map.get("username"))
@@ -162,7 +204,31 @@ public class SessionStateSerializer extends StateSerializer<SessionState> {
                         }
                         yield new QueryLoopState(restored);
                     }
-                    case "UserMessage" -> new UserMessage((String) map.get("text"));
+                    case "UserMessage" -> {
+                        List<Map<String, Object>> contentMaps = (List<Map<String, Object>>) map.get("contents");
+                        if (contentMaps != null && !contentMaps.isEmpty()) {
+                            List<Content> contents = new ArrayList<>();
+                            for (Map<String, Object> item : contentMaps) {
+                                String contentType = String.valueOf(item.get("type"));
+                                if ("image".equals(contentType) && item.get("base64Data") != null) {
+                                    contents.add(ImageContent.from((String) item.get("base64Data"), (String) item.get("mimeType")));
+                                } else if ("text".equals(contentType)) {
+                                    contents.add(TextContent.from((String) item.getOrDefault("text", "")));
+                                }
+                            }
+                            UserMessage.Builder builder = UserMessage.builder().contents(contents);
+                            Object attributes = fromSerializable(map.get("attributes"));
+                            if (attributes instanceof Map<?, ?> attributesMap) {
+                                Map<String, Object> normalized = new HashMap<>();
+                                for (Map.Entry<?, ?> entry : attributesMap.entrySet()) {
+                                    normalized.put(String.valueOf(entry.getKey()), entry.getValue());
+                                }
+                                builder.attributes(normalized);
+                            }
+                            yield builder.build();
+                        }
+                        yield new UserMessage((String) map.get("text"));
+                    }
                     case "AiMessage" -> {
                         // Dashscope API 要求 content 不能为 null，反序列化时兜底空字符串
                         String text = map.get("text") != null ? (String) map.get("text") : "";
@@ -206,6 +272,20 @@ public class SessionStateSerializer extends StateSerializer<SessionState> {
             return result;
         }
         return value;
+    }
+
+    private static int intValue(Object value) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value == null) {
+            return 0;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(value));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     /** 将状态 Map 转换为可序列化 Map */

@@ -18,6 +18,10 @@ import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Base64;
+import java.util.LinkedHashSet;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -37,10 +41,24 @@ public class FileParseService {
             "pdf", "doc", "docx", "txt", "html", "htm"
     );
 
+    private static final Set<String> SUPPORTED_IMAGE_TYPES = Set.of(
+            "png", "jpg", "jpeg", "webp", "gif"
+    );
+
+    private static final Map<String, String> IMAGE_MIME_TYPES = Map.of(
+            "png", "image/png",
+            "jpg", "image/jpeg",
+            "jpeg", "image/jpeg",
+            "webp", "image/webp",
+            "gif", "image/gif"
+    );
+
     /**
      * 最大文件大小：15MB
      */
     private static final long MAX_FILE_SIZE = 15 * 1024 * 1024;
+
+    private static final long MAX_IMAGE_SIZE = 10 * 1024 * 1024;
 
     /**
      * 解析文件内容
@@ -53,6 +71,10 @@ public class FileParseService {
         String fileId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         String fileType = getFileExtension(fileName);
 
+        if (SUPPORTED_IMAGE_TYPES.contains(fileType.toLowerCase(Locale.ROOT))) {
+            return parseImage(fileData, fileName, fileId, fileType);
+        }
+
         // 检查文件大小
         if (fileData.length > MAX_FILE_SIZE) {
             log.warn("[FileParseService] 文件过大: {} bytes, 文件名: {}", fileData.length, fileName);
@@ -60,6 +82,7 @@ public class FileParseService {
                     .fileId(fileId)
                     .fileName(fileName)
                     .fileType(fileType)
+                    .fileKind("document")
                     .fileSize(fileData.length)
                     .parsedAt(Instant.now())
                     .success(false)
@@ -74,6 +97,7 @@ public class FileParseService {
                     .fileId(fileId)
                     .fileName(fileName)
                     .fileType(fileType)
+                    .fileKind("document")
                     .fileSize(fileData.length)
                     .parsedAt(Instant.now())
                     .success(false)
@@ -91,6 +115,7 @@ public class FileParseService {
                     .fileId(fileId)
                     .fileName(fileName)
                     .fileType(fileType)
+                    .fileKind("document")
                     .fileSize(fileData.length)
                     .content(content)
                     .parsedAt(Instant.now())
@@ -103,12 +128,42 @@ public class FileParseService {
                     .fileId(fileId)
                     .fileName(fileName)
                     .fileType(fileType)
+                    .fileKind("document")
                     .fileSize(fileData.length)
                     .parsedAt(Instant.now())
                     .success(false)
                     .errorMessage("文件解析失败：" + e.getMessage())
                     .build();
         }
+    }
+
+    private ParsedFile parseImage(byte[] fileData, String fileName, String fileId, String fileType) {
+        if (fileData.length > MAX_IMAGE_SIZE) {
+            log.warn("[FileParseService] 图片过大: {} bytes, 文件名: {}", fileData.length, fileName);
+            return ParsedFile.builder()
+                    .fileId(fileId)
+                    .fileName(fileName)
+                    .fileType(fileType)
+                    .fileKind("image")
+                    .mimeType(IMAGE_MIME_TYPES.get(fileType.toLowerCase(Locale.ROOT)))
+                    .fileSize(fileData.length)
+                    .parsedAt(Instant.now())
+                    .success(false)
+                    .errorMessage("图片大小超过限制（最大 10MB）")
+                    .build();
+        }
+
+        return ParsedFile.builder()
+                .fileId(fileId)
+                .fileName(fileName)
+                .fileType(fileType)
+                .fileKind("image")
+                .mimeType(IMAGE_MIME_TYPES.get(fileType.toLowerCase(Locale.ROOT)))
+                .fileSize(fileData.length)
+                .base64Data(Base64.getEncoder().encodeToString(fileData))
+                .parsedAt(Instant.now())
+                .success(true)
+                .build();
     }
 
     /**
@@ -221,13 +276,21 @@ public class FileParseService {
      */
     public boolean isSupported(String fileName) {
         String ext = getFileExtension(fileName);
-        return SUPPORTED_TYPES.contains(ext.toLowerCase());
+        String normalized = ext.toLowerCase(Locale.ROOT);
+        return SUPPORTED_TYPES.contains(normalized) || SUPPORTED_IMAGE_TYPES.contains(normalized);
     }
 
     /**
      * 获取支持的文件类型列表
      */
     public Set<String> getSupportedTypes() {
-        return SUPPORTED_TYPES;
+        Set<String> types = new LinkedHashSet<>(SUPPORTED_TYPES);
+        types.addAll(SUPPORTED_IMAGE_TYPES);
+        return types;
+    }
+
+    public boolean isImage(String fileName) {
+        String ext = getFileExtension(fileName);
+        return SUPPORTED_IMAGE_TYPES.contains(ext.toLowerCase(Locale.ROOT));
     }
 }

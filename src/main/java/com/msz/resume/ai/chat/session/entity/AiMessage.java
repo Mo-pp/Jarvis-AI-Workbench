@@ -40,6 +40,8 @@ public class AiMessage {
 
     private String timelineActionsJson;
 
+    private String attachmentsJson;
+
     private Integer tokenCount;
 
     private Boolean isCompressed;//f是否压缩

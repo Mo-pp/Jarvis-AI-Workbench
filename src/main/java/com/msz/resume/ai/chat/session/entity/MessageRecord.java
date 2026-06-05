@@ -40,6 +40,8 @@ public class MessageRecord {
 
     private String timelineActionsJson;
 
+    private String attachmentsJson;
+
     private Integer tokenCount;
 
     private Boolean isCompressed;//是否压缩

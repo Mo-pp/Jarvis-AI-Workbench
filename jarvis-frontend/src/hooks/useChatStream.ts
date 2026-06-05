@@ -11,12 +11,17 @@ import type {
   MessageDonePayload,
   RunStepPayload,
   SessionStartedPayload,
+  ThinkingDonePayload,
+  ThinkingStartedPayload,
   TaskUpdatePayload,
   ToolUseActionPayload,
+  ChatRequest,
 } from '../types';
 
 interface StreamCallbacks {
   onSessionStarted?: (payload: SessionStartedPayload) => void;
+  onThinkingStarted?: (payload: ThinkingStartedPayload) => void;
+  onThinkingDone?: (payload: ThinkingDonePayload) => void;
   onMessageDelta?: (delta: string, fullText: string) => void;
   onMessageDone?: (content: string, payload: MessageDonePayload) => void;
   onAssistantCheckpoint?: (payload: AssistantCheckpointPayload) => void;
@@ -61,7 +66,7 @@ class ChatStreamClient {
   private manuallyClosed = false;
   private suppressCloseError = false;
 
-  async connect(url: string, callbacks: StreamCallbacks) {
+  async connect(url: string, callbacks: StreamCallbacks, requestBody?: ChatRequest) {
     this.disconnect();
     this.callbacks = callbacks;
     this.currentMessage = '';
@@ -73,11 +78,13 @@ class ChatStreamClient {
     try {
       const token = getAuthToken();
       const response = await fetch(url, {
-        method: 'GET',
+        method: requestBody ? 'POST' : 'GET',
         headers: {
           Accept: 'text/event-stream',
+          ...(requestBody ? { 'Content-Type': 'application/json' } : {}),
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
+        ...(requestBody ? { body: JSON.stringify(requestBody) } : {}),
         signal: this.abortController.signal,
       });
 
@@ -143,6 +150,12 @@ class ChatStreamClient {
     switch (type) {
       case 'session_started':
         this.callbacks.onSessionStarted?.(data.payload as SessionStartedPayload);
+        break;
+      case 'thinking_started':
+        this.callbacks.onThinkingStarted?.(data.payload as ThinkingStartedPayload);
+        break;
+      case 'thinking_done':
+        this.callbacks.onThinkingDone?.(data.payload as ThinkingDonePayload);
         break;
       case 'message_delta': {
         const payload = data.payload as MessageDeltaPayload;
@@ -218,6 +231,34 @@ export function useChatStream() {
     username?: string,
     language?: string,
     outputStyle?: string,
+    imageFileIds?: string[],
+    attachmentIds?: string[],
+  ) => {
+    const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/claude';
+    const requestBody: ChatRequest = {
+      sessionId,
+      userMessage,
+      userId,
+      username,
+      language,
+      outputStyle,
+      fileId,
+      imageFileIds,
+      attachmentIds,
+    };
+    const url = `${apiBaseUrl}/chat/stream`;
+    void getClient(sessionId).connect(url, callbacks, requestBody);
+  }, [getClient]);
+
+  const sendMessageGet = useCallback((
+    sessionId: string,
+    userMessage: string,
+    callbacks: StreamCallbacks,
+    fileId?: string,
+    userId?: string,
+    username?: string,
+    language?: string,
+    outputStyle?: string,
   ) => {
     const apiBaseUrl = import.meta.env.VITE_API_URL || '/api/claude';
     const params = new URLSearchParams({
@@ -264,6 +305,7 @@ export function useChatStream() {
 
   return {
     sendMessage,
+    sendMessageGet,
     disconnect,
     getCurrentMessage,
     resetMessage,

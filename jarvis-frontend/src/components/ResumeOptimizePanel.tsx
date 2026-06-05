@@ -1,6 +1,6 @@
-import { ArrowUp, Briefcase, Check, ChevronDown, ClipboardList, LoaderCircle, Target, Wand2 } from 'lucide-react';
+import { ArrowUp, Briefcase, Check, ChevronDown, ClipboardList, FileText, LoaderCircle, Target, Wand2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { OptimizeResult, ResumeVO } from '../types';
+import type { JdMatchEvaluation, OptimizeResult, ResumeQualityEvaluation, ResumeVO } from '../types';
 
 interface ResumeOptimizePanelProps {
   resume: ResumeVO;
@@ -36,6 +36,48 @@ function ListBlock(props: { title: string; items?: string[] }) {
   );
 }
 
+function ScoreTile(props: { title: string; score?: number; icon: React.ReactNode; summary?: string }) {
+  const score = scoreValue(props.score);
+  return (
+    <div className="resume-evaluation-score-tile">
+      <div className="resume-evaluation-score-label">
+        {props.icon}
+        <span>{props.title}</span>
+      </div>
+      <strong>{score}<small>/100</small></strong>
+      {props.summary && <p>{props.summary}</p>}
+    </div>
+  );
+}
+
+function QualitySummary(props: { title: string; quality?: ResumeQualityEvaluation }) {
+  if (!props.quality?.summary && !props.quality?.issues?.length && !props.quality?.suggestions?.length) return null;
+  return (
+    <div className="resume-optimize-list-block">
+      <h4>{props.title}</h4>
+      {props.quality?.summary && <p className="resume-match-copy">{props.quality.summary}</p>}
+      <ListBlock title={`${props.title}问题`} items={props.quality?.issues} />
+      <ListBlock title={`${props.title}建议`} items={props.quality?.suggestions} />
+    </div>
+  );
+}
+
+function getJdMatch(result?: OptimizeResult): JdMatchEvaluation | undefined {
+  if (!result) return undefined;
+  if (result.evaluation?.jdMatch) return result.evaluation.jdMatch;
+  if (typeof result.matchScore === 'number' || result.matchAnalysis) {
+    return {
+      score: result.matchScore,
+      summary: [result.matchAnalysis?.experienceMatch, result.matchAnalysis?.educationMatch].filter(Boolean).join('\n') || undefined,
+      matchedSkills: result.matchAnalysis?.matchedSkills,
+      missingRequirements: result.matchAnalysis?.missingSkills,
+      bonusItems: result.matchAnalysis?.matchedBonus,
+      suggestions: result.suggestions,
+    };
+  }
+  return undefined;
+}
+
 const OPTIMIZE_SCOPE_OPTIONS = [
   { value: 'full', label: '整份简历' },
   { value: 'summary', label: '个人总结' },
@@ -58,8 +100,11 @@ export function ResumeOptimizePanel({
   const [goal, setGoal] = useState('提升 JD 匹配度，强化量化成果、关键词覆盖和表达专业度。');
   const [jobDescription, setJobDescription] = useState('');
   const scopeMenuRef = useRef<HTMLDivElement | null>(null);
-  const score = scoreValue(result?.matchScore);
   const selectedScope = OPTIMIZE_SCOPE_OPTIONS.find((option) => option.value === scope) || OPTIMIZE_SCOPE_OPTIONS[0];
+  const originalQuality = result?.evaluation?.originalResume;
+  const generatedQuality = result?.evaluation?.generatedResume || result?.evaluation?.quality;
+  const jdMatch = getJdMatch(result);
+  const hasJdMatch = Boolean(result?.evaluation?.hasJd && jdMatch) || (!result?.evaluation && Boolean(jdMatch));
 
   useEffect(() => {
     if (!isScopeMenuOpen) return;
@@ -178,28 +223,36 @@ export function ResumeOptimizePanel({
 
       {result && (
         <section className="resume-optimize-result" aria-live="polite">
-          <div className="resume-score-head">
-            <div>
-              <span>匹配度</span>
-              <strong>{score}<small>/100</small></strong>
-            </div>
-            <div className="resume-score-ring" style={{ '--resume-score': `${score * 3.6}deg` } as React.CSSProperties} />
-          </div>
-          <div className="resume-score-bar">
-            <span style={{ width: `${score}%` }} />
+          <div className="resume-evaluation-score-grid">
+            <ScoreTile
+              title="原始简历"
+              score={originalQuality?.score}
+              summary={originalQuality?.summary}
+              icon={<FileText size={15} />}
+            />
+            <ScoreTile
+              title="Jarvis 预览"
+              score={generatedQuality?.score}
+              summary={generatedQuality?.summary}
+              icon={<Wand2 size={15} />}
+            />
+            {hasJdMatch && (
+              <ScoreTile
+                title="JD 匹配度"
+                score={jdMatch?.score}
+                summary={jdMatch?.summary}
+                icon={<Target size={15} />}
+              />
+            )}
           </div>
 
-          {result.matchAnalysis?.experienceMatch && (
-            <p className="resume-match-copy">{result.matchAnalysis.experienceMatch}</p>
-          )}
-          {result.matchAnalysis?.educationMatch && (
-            <p className="resume-match-copy">{result.matchAnalysis.educationMatch}</p>
-          )}
-
-          <ListBlock title="已匹配技能" items={result.matchAnalysis?.matchedSkills} />
-          <ListBlock title="缺失技能" items={result.matchAnalysis?.missingSkills} />
-          <ListBlock title="加分项" items={result.matchAnalysis?.matchedBonus} />
-          <ListBlock title="优化建议" items={result.suggestions} />
+          <QualitySummary title="原始简历评价" quality={originalQuality} />
+          <QualitySummary title="Jarvis 预览评价" quality={generatedQuality} />
+          {hasJdMatch && <ListBlock title="已匹配技能" items={jdMatch?.matchedSkills} />}
+          {hasJdMatch && <ListBlock title="缺失要求" items={jdMatch?.missingRequirements} />}
+          {hasJdMatch && <ListBlock title="加分项" items={jdMatch?.bonusItems} />}
+          {hasJdMatch && <ListBlock title="JD 优化建议" items={jdMatch?.suggestions || result.suggestions} />}
+          {!hasJdMatch && <ListBlock title="优化建议" items={generatedQuality?.suggestions || result.suggestions} />}
           <ListBlock title="亮点提炼" items={result.highlights} />
         </section>
       )}

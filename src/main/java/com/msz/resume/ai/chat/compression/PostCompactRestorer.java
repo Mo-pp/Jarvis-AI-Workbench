@@ -2,6 +2,7 @@ package com.msz.resume.ai.chat.compression;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.msz.resume.ai.chat.session.converter.ChatMessageTextExtractor;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.UserMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -174,7 +175,7 @@ public class PostCompactRestorer {
         Set<String> names = new HashSet<>();
         for (ChatMessage msg : messages) {
             if (msg instanceof UserMessage userMsg) {
-                String text = userMsg.singleText();
+                String text = ChatMessageTextExtractor.userText(userMsg);
                 if (text != null && text.contains("[Skill: ")) {
                     // 提取 Skill 名称，格式：[Skill: skill-name]
                     int start = text.indexOf("[Skill: ") + 8;

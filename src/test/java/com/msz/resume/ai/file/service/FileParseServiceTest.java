@@ -83,8 +83,9 @@ class FileParseServiceTest {
         assertTrue(fileParseService.isSupported("test.txt"));
         assertTrue(fileParseService.isSupported("test.html"));
         assertTrue(fileParseService.isSupported("test.htm"));
+        assertTrue(fileParseService.isSupported("test.png"));
+        assertTrue(fileParseService.isSupported("test.jpeg"));
         assertFalse(fileParseService.isSupported("test.xyz"));
-        assertFalse(fileParseService.isSupported("test.png"));
     }
 
     @Test
@@ -98,6 +99,20 @@ class FileParseServiceTest {
         assertTrue(types.contains("txt"));
         assertTrue(types.contains("html"));
         assertTrue(types.contains("htm"));
+    }
+
+    @Test
+    @DisplayName("解析 PNG 图片应保存 base64 和 MIME")
+    void testParsePngImage() {
+        byte[] fileData = new byte[] {(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A};
+
+        ParsedFile result = fileParseService.parse(fileData, "screen.png");
+
+        assertTrue(result.isSuccess());
+        assertEquals("image", result.getFileKind());
+        assertEquals("image/png", result.getMimeType());
+        assertNotNull(result.getBase64Data());
+        assertNull(result.getContent());
     }
 
     @Test

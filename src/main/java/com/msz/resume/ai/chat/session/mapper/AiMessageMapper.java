@@ -36,10 +36,10 @@ public interface AiMessageMapper extends BaseMapper<AiMessage> {
      */
     @Insert("""
         <script>
-        INSERT INTO ai_message (session_id, message_type, content, tool_calls_json, tool_result, tool_call_id, tool_name, token_count, is_compressed, created_at)
+        INSERT INTO ai_message (session_id, message_type, content, tool_calls_json, tool_result, tool_call_id, tool_name, timeline_actions_json, attachments_json, token_count, is_compressed, created_at)
         VALUES
         <foreach collection="list" item="msg" separator=",">
-            (#{msg.sessionId}, #{msg.messageType}, #{msg.content}, #{msg.toolCallsJson}, #{msg.toolResult}, #{msg.toolCallId}, #{msg.toolName}, #{msg.tokenCount}, #{msg.isCompressed}, #{msg.createdAt})
+            (#{msg.sessionId}, #{msg.messageType}, #{msg.content}, #{msg.toolCallsJson}, #{msg.toolResult}, #{msg.toolCallId}, #{msg.toolName}, #{msg.timelineActionsJson}, #{msg.attachmentsJson}, #{msg.tokenCount}, #{msg.isCompressed}, #{msg.createdAt})
         </foreach>
         </script>
         """)

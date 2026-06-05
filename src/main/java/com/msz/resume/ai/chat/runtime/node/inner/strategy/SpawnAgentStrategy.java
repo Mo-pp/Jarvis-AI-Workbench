@@ -6,6 +6,7 @@ import com.msz.resume.ai.agent.SubAgentType;
 import com.msz.resume.ai.chat.runtime.trace.DelegationActionEventService;
 import com.msz.resume.ai.chat.runtime.trace.TraceAgentDescriptor;
 import com.msz.resume.ai.chat.runtime.trace.TraceService;
+import com.msz.resume.ai.chat.runtime.trace.langfuse.LangfuseTracingService;
 import com.msz.resume.ai.chat.prompt.model.UserProfile;
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
 import com.msz.resume.ai.chat.runtime.subagent.SubAgentResult;
@@ -46,17 +47,20 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
     private final SubGraphNode subGraphNode;
     private final TraceService traceService;
     private final DelegationActionEventService delegationActionEventService;
+    private final LangfuseTracingService langfuseTracingService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 注入普通工具策略、子图执行器和子 Agent 相关 trace 事件服务。 */
     public SpawnAgentStrategy(NormalToolStrategy normalToolStrategy,
                               SubGraphNode subGraphNode,
                               TraceService traceService,
-                              DelegationActionEventService delegationActionEventService) {
+                              DelegationActionEventService delegationActionEventService,
+                              LangfuseTracingService langfuseTracingService) {
         this.normalToolStrategy = normalToolStrategy;
         this.subGraphNode = subGraphNode;
         this.traceService = traceService;
         this.delegationActionEventService = delegationActionEventService;
+        this.langfuseTracingService = langfuseTracingService;
     }
 
     @Override
@@ -130,10 +134,11 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
                 }
                 SpawnAgentParams params = parseSpawnAgentParams(req);
                 if (params == null) {
-                    allResults.add(ToolExecutionResultMessage.from(req,
-                            "spawnAgent 参数解析失败：无法解析 prompt、allowedTools、maxTurns"));
+                    String errorMsg = "spawnAgent 参数解析失败：无法解析 prompt、allowedTools、maxTurns";
+                    allResults.add(ToolExecutionResultMessage.from(req, errorMsg));
                     allContexts.add(req);
                     finalTransition = ToolExecutionResult.TRANSITION_FAILED;
+                    recordSpawnAgentToolResult(context, req, null, "failed", errorMsg);
                     if (context.traceContext() != null) {
                         traceService.failToolCall(context.traceContext(), context.agentDescriptor(), req);
                     }
@@ -194,6 +199,7 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
                             saResult.subAgentResult().outputTokens());
                 }
                 if (context.traceContext() != null) {
+                    recordSpawnAgentToolResult(context, saResult.request(), saResult.output(), saResult.status(), saResult.error());
                     if (saResult.subAgentResult() != null && !saResult.subAgentResult().isError() && saResult.subAgentStepId() != null) {
                         traceService.completeSubAgent(context.traceContext(), saResult.subAgentDescriptor(), saResult.subAgentStepId());
                     }
@@ -329,7 +335,7 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
         ).thenApply(subAgentResult -> {
             String formattedResult = formatSubAgentResult(params.prompt(), subAgentResult);
             ToolExecutionResultMessage resultMsg = ToolExecutionResultMessage.from(request, formattedResult);
-            return new SpawnAgentExecutionResult(resultMsg, request, subAgentResult.isSuccess(), subAgentResult, subAgentDescriptor, subAgentStepId, params.prompt());
+            return new SpawnAgentExecutionResult(resultMsg, request, !subAgentResult.isError(), subAgentResult, subAgentDescriptor, subAgentStepId, params.prompt());
         }).exceptionally(e -> {
             log.error("[SpawnAgentStrategy] 子Agent执行异常", e);
             String errorMsg = String.format("[子Agent执行异常]\n任务：%s\n错误：%s",
@@ -337,6 +343,17 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
             ToolExecutionResultMessage resultMsg = ToolExecutionResultMessage.from(request, errorMsg);
             return new SpawnAgentExecutionResult(resultMsg, request, false, null, subAgentDescriptor, subAgentStepId, params.prompt());
         });
+    }
+
+    private void recordSpawnAgentToolResult(ToolExecutionContext context,
+                                            ToolExecutionRequest request,
+                                            String output,
+                                            String status,
+                                            String error) {
+        if (langfuseTracingService == null || context == null || context.traceContext() == null) {
+            return;
+        }
+        langfuseTracingService.recordToolResult(context.traceContext(), request, output, status, error);
     }
 
     /** 把子 Agent 的结构化结果格式化成主 Agent 能直接阅读的文本摘要。 */
@@ -379,6 +396,21 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
             TraceAgentDescriptor subAgentDescriptor,
             String subAgentStepId,
             String taskDescription
-    ) {}
+    ) {
+        String output() {
+            return success ? resultMessage.text() : null;
+        }
+
+        String status() {
+            if (subAgentResult == null) {
+                return success ? "success" : "failed";
+            }
+            return subAgentResult.status();
+        }
+
+        String error() {
+            return success ? null : resultMessage.text();
+        }
+    }
 
 }

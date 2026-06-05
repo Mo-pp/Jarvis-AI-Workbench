@@ -1,11 +1,16 @@
-import { FileDown, FileText, Pencil, Wand2 } from 'lucide-react';
-import { useCallback, useState } from 'react';
+import { FileDown, FileText, Palette, Pencil, Wand2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import resumeExportCss from './resume-export.css?inline';
 import { ApiError, resumeExportService } from '../services/api';
 import type { OptimizeResult, ResumeVO } from '../types';
 import { ResumeEditorPanel } from './ResumeEditorPanel';
 import { ResumeOptimizePanel, type ResumeOptimizeRequest } from './ResumeOptimizePanel';
 import { ResumePreview } from './ResumePreview';
+import {
+  RESUME_TEMPLATE_OPTIONS,
+  type ResumePageState,
+  type ResumeTemplateId,
+} from './resumeTemplates';
 
 interface ResumeWorkbenchProps {
   resume: ResumeVO;
@@ -16,6 +21,14 @@ interface ResumeWorkbenchProps {
 }
 
 type ResumeWorkbenchMode = 'edit' | 'optimize';
+const RESUME_TEMPLATE_STORAGE_KEY = 'jarvis.resume.template';
+
+function getInitialTemplate(): ResumeTemplateId {
+  if (typeof window === 'undefined') return 'blueSinglePage';
+
+  const stored = window.localStorage.getItem(RESUME_TEMPLATE_STORAGE_KEY);
+  return stored === 'classic' || stored === 'blueSinglePage' ? stored : 'blueSinglePage';
+}
 
 export function ResumeWorkbench({
   resume,
@@ -24,12 +37,32 @@ export function ResumeWorkbench({
   onResumeChange,
   onOptimize,
 }: ResumeWorkbenchProps) {
-  const [mode, setMode] = useState<ResumeWorkbenchMode>('edit');
+  const [mode, setMode] = useState<ResumeWorkbenchMode>(() => optimizeResult ? 'optimize' : 'edit');
+  const [templateId, setTemplateId] = useState<ResumeTemplateId>(() => getInitialTemplate());
+  const [pageState, setPageState] = useState<ResumePageState>({
+    pageCount: 1,
+    fitMode: 'comfortable',
+    overflow: false,
+  });
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [previewElement, setPreviewElement] = useState<HTMLDivElement | null>(null);
 
+  useEffect(() => {
+    window.localStorage.setItem(RESUME_TEMPLATE_STORAGE_KEY, templateId);
+  }, [templateId]);
+
+  useEffect(() => {
+    if (optimizeResult) {
+      setMode('optimize');
+    }
+  }, [optimizeResult]);
+
   const handlePreviewRef = useCallback((node: HTMLDivElement | null) => {
     setPreviewElement(node);
+  }, []);
+
+  const handlePageStateChange = useCallback((state: ResumePageState) => {
+    setPageState(state);
   }, []);
 
   const buildExportHtml = () => {
@@ -77,6 +110,12 @@ export function ResumeWorkbench({
 
   const handleExportPdf = async () => {
     if (isExportingPdf) return;
+    if (pageState.overflow) {
+      const canExportTwoPages = window.confirm(
+        '当前简历已使用最紧凑排版仍超过 1 页。是否确认按 2 页导出？',
+      );
+      if (!canExportTwoPages) return;
+    }
 
     setIsExportingPdf(true);
     try {
@@ -103,6 +142,22 @@ export function ResumeWorkbench({
             <span>实时预览</span>
           </h2>
           <div className="resume-pane-actions">
+            <div className="resume-template-switch" role="tablist" aria-label="简历模板">
+              {RESUME_TEMPLATE_OPTIONS.map((template) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  className={templateId === template.id ? 'active' : ''}
+                  onClick={() => setTemplateId(template.id)}
+                  role="tab"
+                  aria-selected={templateId === template.id}
+                  title={`切换到${template.label}`}
+                >
+                  <Palette size={14} />
+                  <span>{template.label}</span>
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               className="resume-export-pdf-btn"
@@ -116,7 +171,12 @@ export function ResumeWorkbench({
             </button>
           </div>
         </div>
-        <ResumePreview resume={resume} exportContainerRef={handlePreviewRef} />
+        <ResumePreview
+          resume={resume}
+          templateId={templateId}
+          exportContainerRef={handlePreviewRef}
+          onPageStateChange={handlePageStateChange}
+        />
       </section>
 
       <section className="resume-control-pane">

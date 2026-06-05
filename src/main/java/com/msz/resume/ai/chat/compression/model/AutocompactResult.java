@@ -20,7 +20,10 @@ public record AutocompactResult(
     int originalTokens,
     int compactedTokens,
     boolean success,
-    String errorMessage
+    String errorMessage,
+    int splitIndex,
+    int preservedCount,
+    List<ChatMessage> summaryPrefixMessages
 ) {
 
     /**
@@ -32,7 +35,25 @@ public record AutocompactResult(
      * @return 成功的 AutocompactResult
      */
     public static AutocompactResult success(List<ChatMessage> messages, int originalTokens, int compactedTokens) {
-        return new AutocompactResult(messages, originalTokens, compactedTokens, true, null);
+        return success(messages, originalTokens, compactedTokens, -1, 0, List.of());
+    }
+
+    public static AutocompactResult success(List<ChatMessage> messages,
+                                            int originalTokens,
+                                            int compactedTokens,
+                                            int splitIndex,
+                                            int preservedCount,
+                                            List<ChatMessage> summaryPrefixMessages) {
+        return new AutocompactResult(
+                messages,
+                originalTokens,
+                compactedTokens,
+                true,
+                null,
+                splitIndex,
+                preservedCount,
+                summaryPrefixMessages != null ? summaryPrefixMessages : List.of()
+        );
     }
 
     /**
@@ -43,7 +64,7 @@ public record AutocompactResult(
      * @return 失败的 AutocompactResult
      */
     public static AutocompactResult failure(int originalTokens, String errorMessage) {
-        return new AutocompactResult(null, originalTokens, 0, false, errorMessage);
+        return new AutocompactResult(null, originalTokens, 0, false, errorMessage, -1, 0, List.of());
     }
 
     /**
@@ -54,7 +75,7 @@ public record AutocompactResult(
      * @return 跳过的 AutocompactResult
      */
     public static AutocompactResult skipped(List<ChatMessage> messages, int tokens) {
-        return new AutocompactResult(messages, tokens, tokens, true, null);
+        return new AutocompactResult(messages, tokens, tokens, true, null, -1, 0, List.of());
     }
 
     /**

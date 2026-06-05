@@ -1,6 +1,8 @@
 package com.msz.resume.ai.chat.runtime.trace;
 
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
+import com.msz.resume.ai.chat.runtime.trace.langfuse.LangfuseTracingService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -23,6 +25,17 @@ import java.util.Map;
  */
 @Service
 public class TraceService {
+
+    private final LangfuseTracingService langfuseTracingService;
+
+    public TraceService() {
+        this(null);
+    }
+
+    @Autowired
+    public TraceService(LangfuseTracingService langfuseTracingService) {
+        this.langfuseTracingService = langfuseTracingService;
+    }
 
     /** 启动一轮 LLM Trace 节点，给当前 Agent 挂上新的根步骤。 */
     public void startLlmRound(ChatRunTraceContext context, TraceAgentDescriptor agentDescriptor) {
@@ -427,5 +440,8 @@ public class TraceService {
                 ? context.publisher()
                 : new SseTracePublisher(context);
         publisher.publishStep(event);
+        if (langfuseTracingService != null) {
+            langfuseTracingService.recordStep(context, event);
+        }
     }
 }

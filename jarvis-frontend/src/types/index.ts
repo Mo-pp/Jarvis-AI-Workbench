@@ -12,6 +12,19 @@ export interface ChatRequest {
   language?: string;
   outputStyle?: string;
   fileId?: string;
+  imageFileIds?: string[];
+  attachmentIds?: string[];
+}
+
+export interface ChatAttachment {
+  fileId?: string;
+  fileName?: string;
+  fileType?: string;
+  fileKind?: 'document' | 'image' | string;
+  mimeType?: string;
+  fileSize?: number;
+  previewUrl?: string;
+  available?: boolean;
 }
 
 export interface AuthUser {
@@ -65,6 +78,12 @@ export interface MessageItem {
 export interface MindmapData {
   type: 'mindmap';
   markdown: string;
+}
+
+export interface MarkdownArtifact {
+  type: 'markdown';
+  markdown: string;
+  title?: string;
 }
 
 /** 简历结构化数据 */
@@ -155,6 +174,7 @@ export interface OptimizeResult {
   type?: 'optimize_result';
   matchScore?: number;
   matchAnalysis?: MatchAnalysis;
+  evaluation?: ResumeEvaluationBundle;
   suggestions?: string[];
   highlights?: string[];
   optimizedResume?: ResumeVO;
@@ -167,6 +187,34 @@ export interface MatchAnalysis {
   experienceMatch?: string;
   educationMatch?: string;
   matchedBonus?: string[];
+}
+
+export interface ResumeQualityEvaluation {
+  score?: number;
+  summary?: string;
+  jdWeight?: number | null;
+  dimensionScores?: Record<string, number>;
+  strengths?: string[];
+  issues?: string[];
+  suggestions?: string[];
+}
+
+export interface JdMatchEvaluation {
+  score?: number;
+  summary?: string;
+  matchedSkills?: string[];
+  missingRequirements?: string[];
+  bonusItems?: string[];
+  suggestions?: string[];
+}
+
+export interface ResumeEvaluationBundle {
+  quality?: ResumeQualityEvaluation;
+  originalResume?: ResumeQualityEvaluation;
+  generatedResume?: ResumeQualityEvaluation;
+  jdMatch?: JdMatchEvaluation;
+  hasJd?: boolean;
+  targetPosition?: string;
 }
 
 export interface QuestionnaireArtifact {
@@ -189,8 +237,11 @@ export interface FileUploadResponse {
   fileId: string;
   fileName: string;
   fileType: string;
+  fileKind?: 'document' | 'image' | string;
+  mimeType?: string;
   fileSize: number;
   contentPreview?: string;
+  previewUrl?: string;
   success: boolean;
   errorMessage?: string;
   expiresInSeconds: number;
@@ -273,12 +324,14 @@ export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  attachments?: ChatAttachment[];
   runSteps?: RunStepPayload[];
   actions?: AssistantActionItem[];
   mindmap?: MindmapData;
   resumeData?: ResumeVO;
   optimizeResult?: OptimizeResult;
   questionnaire?: QuestionnaireArtifact;
+  markdownArtifact?: MarkdownArtifact;
   questionTrace?: {
     kind: 'ask_user_question';
     pendingId?: string;
@@ -297,6 +350,9 @@ export interface ChatMessage {
   };
   /** 是否正在流式输出中 */
   isStreaming?: boolean;
+  thinking?: {
+    status: 'running' | 'success' | 'failed';
+  };
 }
 
 /**
@@ -315,6 +371,8 @@ export interface ChatStreamEvent {
 /** SSE 事件类型 */
 export type StreamEventType =
   | 'session_started'
+  | 'thinking_started'
+  | 'thinking_done'
   | 'message_delta'
   | 'message_done'
   | 'assistant_checkpoint'
@@ -337,6 +395,16 @@ export interface SessionStartedPayload {
   streaming: boolean;
   runId?: string;
   pendingId?: string;
+}
+
+export interface ThinkingStartedPayload {
+  mode: 'hidden' | string;
+  provider: 'gpt' | string;
+  summaryAvailable: boolean;
+}
+
+export interface ThinkingDonePayload extends ThinkingStartedPayload {
+  status: 'success' | 'failed' | string;
 }
 
 export type RunStepKind = 'llm' | 'tool_batch' | 'tool_call' | 'sub_agent';

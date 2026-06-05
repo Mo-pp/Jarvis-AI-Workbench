@@ -29,6 +29,7 @@ final class ArtifactResponseExtractor {
             "questionnaire",
             "resume",
             "optimize_result",
+            "resume_evaluation",
             "markdown"
     );
 
@@ -106,18 +107,77 @@ final class ArtifactResponseExtractor {
             return content;
         }
 
-        JsonNode node = parseJsonObject(content, objectMapper);
-        if (node == null || !node.isObject()) {
+        Set<String> artifactTypes = artifacts.stream()
+                .map(ChatArtifact::getType)
+                .filter(type -> type != null && !type.isBlank())
+                .collect(java.util.stream.Collectors.toSet());
+        if (artifactTypes.isEmpty()) {
             return content;
         }
 
-        String type = node.path("type").asText("");
-        if (type.isBlank()) {
+        String trimmed = stripMarkdownFence(content.trim());
+        JsonNode wholeNode = parseJsonObject(content, objectMapper);
+        if (wholeNode != null) {
+            String type = wholeNode.path("type").asText("");
+            if (artifactTypes.contains(type)) {
+                return "";
+            }
+        }
+
+        List<JsonObjectCandidate> candidates = findJsonObjectCandidates(trimmed, objectMapper).stream()
+                .filter(candidate -> artifactTypes.contains(candidate.node().path("type").asText(""))
+                        && isValidArtifactNode(candidate.node().path("type").asText(""), unwrapPayloadNode(candidate.node().path("type").asText(""), candidate.node())))
+                .toList();
+        if (candidates.isEmpty()) {
             return content;
         }
 
-        boolean knownArtifact = artifacts.stream().anyMatch(artifact -> type.equals(artifact.getType()));
-        return knownArtifact ? "" : content;
+        StringBuilder sb = new StringBuilder(trimmed);
+        for (int i = candidates.size() - 1; i >= 0; i--) {
+            JsonObjectCandidate candidate = candidates.get(i);
+            sb.delete(candidate.start(), candidate.endExclusive());
+        }
+        String cleaned = sb.toString()
+                .replaceAll("(?is)```(?:json)?\\s*\\n\\s*```", "")
+                .replaceAll("[ \\t]+\\n", "\n")
+                .replaceAll("\\n\\s*\\n", "\n")
+                .trim();
+        return cleaned;
+    }
+
+    static String extractVisibleAssistantText(List<ChatMessage> messages,
+                                              List<ChatArtifact> artifacts,
+                                              ObjectMapper objectMapper) {
+        if (messages == null || messages.isEmpty()) {
+            return null;
+        }
+
+        boolean hasArtifacts = artifacts != null && !artifacts.isEmpty();
+        int latestUserIndex = -1;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i) instanceof UserMessage) {
+                latestUserIndex = i;
+                break;
+            }
+        }
+
+        for (int i = messages.size() - 1; i > latestUserIndex; i--) {
+            ChatMessage message = messages.get(i);
+            if (!(message instanceof AiMessage aiMessage)) {
+                continue;
+            }
+
+            String text = stripPureArtifactText(aiMessage.text(), artifacts, objectMapper);
+            if (text == null || text.isBlank()) {
+                continue;
+            }
+            if (hasArtifacts && aiMessage.hasToolExecutionRequests()) {
+                continue;
+            }
+            return text;
+        }
+
+        return hasArtifacts ? "" : null;
     }
 
     private static ChatArtifact artifactFromToolResult(ToolExecutionResultMessage toolMessage, ObjectMapper objectMapper) {
@@ -160,17 +220,25 @@ final class ArtifactResponseExtractor {
     private static ChatArtifact artifactFromAssistantText(String text, ObjectMapper objectMapper) {
         JsonNode node = parseJsonObject(text, objectMapper);
         if (node == null) {
+            node = findJsonObjectCandidates(text, objectMapper).stream()
+                    .map(JsonObjectCandidate::node)
+                    .filter(candidate -> isSupportedType(candidate.path("type").asText("")))
+                    .findFirst()
+                    .orElse(null);
+        }
+        if (node == null) {
             return null;
         }
 
         String type = node.path("type").asText("");
-        if (!isSupportedType(type) || !isValidArtifactNode(type, node)) {
+        JsonNode artifactNode = unwrapPayloadNode(type, node);
+        if (!isSupportedType(type) || artifactNode == null || !isValidArtifactNode(type, artifactNode)) {
             return null;
         }
 
         return ChatArtifact.builder()
                 .type(type)
-                .payload(toPayload(node, objectMapper))
+                .payload(toPayload(artifactNode, objectMapper))
                 .source("assistant")
                 .build();
     }
@@ -208,6 +276,59 @@ final class ArtifactResponseExtractor {
         return normalized.substring(firstLineEnd + 1, lastFence).trim();
     }
 
+    private static List<JsonObjectCandidate> findJsonObjectCandidates(String text, ObjectMapper objectMapper) {
+        if (text == null || text.isBlank() || objectMapper == null) {
+            return List.of();
+        }
+
+        List<JsonObjectCandidate> candidates = new ArrayList<>();
+        int length = text.length();
+        for (int start = 0; start < length; start++) {
+            if (text.charAt(start) != '{') {
+                continue;
+            }
+
+            int depth = 0;
+            boolean inString = false;
+            boolean escaped = false;
+            for (int i = start; i < length; i++) {
+                char ch = text.charAt(i);
+                if (inString) {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (ch == '\\') {
+                        escaped = true;
+                    } else if (ch == '"') {
+                        inString = false;
+                    }
+                    continue;
+                }
+
+                if (ch == '"') {
+                    inString = true;
+                } else if (ch == '{') {
+                    depth++;
+                } else if (ch == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        String raw = text.substring(start, i + 1);
+                        try {
+                            JsonNode node = objectMapper.readTree(raw);
+                            if (node != null && node.isObject() && isSupportedType(node.path("type").asText(""))) {
+                                candidates.add(new JsonObjectCandidate(start, i + 1, node));
+                            }
+                        } catch (Exception ignored) {
+                            // Try the next balanced object.
+                        }
+                        start = i;
+                        break;
+                    }
+                }
+            }
+        }
+        return candidates;
+    }
+
     private static boolean isSupportedType(String type) {
         return type != null && SUPPORTED_TYPES.contains(type);
     }
@@ -221,6 +342,7 @@ final class ArtifactResponseExtractor {
         // Structured tool results now return {"type":"...","payload":{...}}.
         // Resume-like artifacts still validate against the inner payload object.
         if ("resume".equals(type) || "optimize_result".equals(type)
+                || "resume_evaluation".equals(type)
                 || "mindmap".equals(type) || "questionnaire".equals(type)
                 || "markdown".equals(type)) {
             return payload;
@@ -235,7 +357,12 @@ final class ArtifactResponseExtractor {
             case "resume" -> node.path("resume").isObject() || hasResumeShape(node);
             case "optimize_result" -> node.has("matchScore") || node.path("matchAnalysis").isObject()
                     || node.path("suggestions").isArray() || node.path("highlights").isArray()
-                    || node.path("optimizedResume").isObject() || node.path("resume").isObject();
+                    || node.path("optimizedResume").isObject() || node.path("resume").isObject()
+                    || node.path("evaluation").isObject();
+            case "resume_evaluation" -> node.path("quality").isObject()
+                    || node.path("originalResume").isObject()
+                    || node.path("generatedResume").isObject()
+                    || node.path("jdMatch").isObject();
             case "markdown" -> node.path("markdown").isTextual() && !node.path("markdown").asText().isBlank();
             default -> false;
         };
@@ -267,5 +394,8 @@ final class ArtifactResponseExtractor {
             log.debug("[ArtifactResponseExtractor] artifact 序列化失败: {}", e.getMessage());
             return null;
         }
+    }
+
+    private record JsonObjectCandidate(int start, int endExclusive, JsonNode node) {
     }
 }

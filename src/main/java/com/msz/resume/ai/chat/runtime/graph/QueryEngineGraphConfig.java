@@ -3,6 +3,7 @@ package com.msz.resume.ai.chat.runtime.graph;
 
 import com.msz.resume.ai.integrations.openviking.core.context.OpenVikingIdentitySupport;
 import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
+import com.msz.resume.ai.chat.runtime.logging.LogSanitizer;
 import com.msz.resume.ai.chat.runtime.node.outer.SessionInitNode;
 import com.msz.resume.ai.chat.runtime.node.outer.UsageStatNode;
 import com.msz.resume.ai.chat.runtime.state.serialization.SessionStateSerializer;
@@ -66,6 +67,7 @@ public class QueryEngineGraphConfig {
                     innerInput.put(QueryLoopState.SESSION_ID, sessionState.getSessionId());
                     innerInput.put(QueryLoopState.TASK_PLAN, innerState.getTaskPlan());
                     innerInput.put(QueryLoopState.SURFACED_OPENVIKING_URIS, innerState.getSurfacedOpenVikingUris());
+                    innerInput.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, innerState.getLlmContextCheckpoint());
                     innerInput.put(QueryLoopState.TRACE_RUN_ID, innerState.getTraceRunId());
                     innerInput.put(QueryLoopState.TRACE_AGENT_ID, innerState.getTraceAgentId());
                     innerInput.put(QueryLoopState.TRACE_AGENT_LABEL, innerState.getTraceAgentLabel());
@@ -80,7 +82,9 @@ public class QueryEngineGraphConfig {
 
                         QueryLoopState finalInnerState = null;
                         for (var output : compiledInner.stream(innerInput)) {
-                            log.info("[内层步骤] " + output.node() + ", 状态: " + output.state());
+                            log.info("[内层步骤] {}, 状态: {}",
+                                    output.node(),
+                                    LogSanitizer.sanitizeLargeInlineData(output.state()));
                             finalInnerState = output.state();
                         }
                         Map<String, Object> update = new HashMap<>();

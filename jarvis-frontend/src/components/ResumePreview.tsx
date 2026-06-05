@@ -1,5 +1,16 @@
-import { Briefcase, Building2, FileText, GraduationCap, Mail, MapPin, Phone, Sparkles } from 'lucide-react';
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  AlertTriangle,
+  Briefcase,
+  Building2,
+  FileText,
+  GraduationCap,
+  Mail,
+  MapPin,
+  Phone,
+  Sparkles,
+} from 'lucide-react';
+import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ResumeFitMode, ResumePageState, ResumeTemplateId } from './resumeTemplates';
 import type {
   Award,
   CampusExperience,
@@ -12,7 +23,9 @@ import type {
 
 interface ResumePreviewProps {
   resume: ResumeVO;
+  templateId?: ResumeTemplateId;
   exportContainerRef?: React.Ref<HTMLDivElement>;
+  onPageStateChange?: (state: ResumePageState) => void;
 }
 
 type BlockKind = 'header' | 'section_title' | 'section_summary' | 'item' | 'skills';
@@ -23,9 +36,24 @@ interface ResumeBlock {
   node: ReactNode;
 }
 
+interface PaginationResult {
+  pages: string[][];
+  pageCount: number;
+}
+
 const PAPER_HEIGHT = 1122;
-const PAPER_VERTICAL_PADDING = 84;
-const PAPER_CONTENT_HEIGHT = PAPER_HEIGHT - PAPER_VERTICAL_PADDING;
+const FIT_MODES: ResumeFitMode[] = ['comfortable', 'compact', 'dense'];
+const FIT_MODE_CONTENT_HEIGHT: Record<ResumeFitMode, number> = {
+  comfortable: PAPER_HEIGHT - 84,
+  compact: PAPER_HEIGHT - 68,
+  dense: PAPER_HEIGHT - 60,
+};
+const EMPTY_EDUCATION_LIST: Education[] = [];
+const EMPTY_WORK_LIST: WorkExperience[] = [];
+const EMPTY_PROJECT_LIST: Project[] = [];
+const EMPTY_CAMPUS_LIST: CampusExperience[] = [];
+const EMPTY_AWARD_LIST: Award[] = [];
+const EMPTY_SKILL_LIST: Skill[] = [];
 
 function text(value?: string, fallback = '') {
   return value?.trim() || fallback;
@@ -45,6 +73,87 @@ function dateRange(start?: string, end?: string) {
   return left || right;
 }
 
+function templateClassName(templateId: ResumeTemplateId) {
+  return templateId === 'blueSinglePage' ? 'resume-template-blue-single' : 'resume-template-classic';
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function addTextPart(parts: ReactNode[], value: string, keyPrefix: string) {
+  if (!value) return;
+
+  const metricPattern =
+    /(\d+(?:\.\d+)?\s*(?:%|ms|s|秒|分钟|h|小时|QPS|TPS|W|万|K|k|token|Token|tokens|Tokens)|(?:提升|降低|下降|减少|命中率|响应时间|成本|延迟|吞吐|并发|可用性|重复下单率|采纳率)[^，。；;、\s]{0,12})/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = metricPattern.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(value.slice(lastIndex, match.index));
+    }
+    parts.push(
+      <strong className="resume-highlight" key={`${keyPrefix}-metric-${match.index}`}>
+        {match[0]}
+      </strong>,
+    );
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < value.length) {
+    parts.push(value.slice(lastIndex));
+  }
+}
+
+function renderInlineText(value: string) {
+  const trimmed = text(value);
+  if (!trimmed) return null;
+
+  const boldSegments: string[] = [];
+  const withoutMarkers = trimmed.replace(/\*\*([^*]+)\*\*/g, (_match, segment: string) => {
+    const token = `__RESUME_BOLD_${boldSegments.length}__`;
+    boldSegments.push(segment);
+    return token;
+  });
+
+  const colonMatch = withoutMarkers.match(/^([^：:]{2,18}[：:])(.+)$/);
+  const prefix = colonMatch?.[1] || '';
+  const content = colonMatch?.[2] || withoutMarkers;
+  const parts: ReactNode[] = [];
+
+  if (prefix) {
+    parts.push(
+      <strong className="resume-bullet-prefix" key="prefix">
+        {prefix}
+      </strong>,
+    );
+  }
+
+  const boldTokenPattern = new RegExp(`(${boldSegments.map((_, index) => `__RESUME_BOLD_${index}__`).join('|')})`);
+  const chunks = boldSegments.length > 0 ? content.split(boldTokenPattern).filter(Boolean) : [content];
+
+  chunks.forEach((chunk, index) => {
+    const tokenIndex = boldSegments.findIndex((_, segmentIndex) => chunk === `__RESUME_BOLD_${segmentIndex}__`);
+    if (tokenIndex >= 0) {
+      parts.push(
+        <strong className="resume-highlight" key={`bold-${index}`}>
+          {boldSegments[tokenIndex]}
+        </strong>,
+      );
+      return;
+    }
+
+    let normalized = chunk;
+    boldSegments.forEach((segment, segmentIndex) => {
+      normalized = normalized.replace(new RegExp(escapeRegExp(`__RESUME_BOLD_${segmentIndex}__`), 'g'), segment);
+    });
+    addTextPart(parts, normalized, `text-${index}`);
+  });
+
+  return parts;
+}
+
 function ResumeSectionTitle(props: { title: string; icon: ReactNode }) {
   return (
     <div className="resume-preview-section-title">
@@ -59,7 +168,7 @@ function ExperienceHeader(props: { title: string; subtitle?: string; meta?: stri
     <div className="resume-preview-item-head">
       <div>
         <h4>{props.title || '未命名经历'}</h4>
-        {props.subtitle && <p>{props.subtitle}</p>}
+        {props.subtitle && <p>{renderInlineText(props.subtitle)}</p>}
       </div>
       {props.meta && <span>{props.meta}</span>}
     </div>
@@ -72,7 +181,7 @@ function BulletList(props: { lines: string[] }) {
   return (
     <ul className="resume-preview-bullet-list">
       {props.lines.map((line, index) => (
-        <li key={`${line}-${index}`}>{line}</li>
+        <li key={`${line}-${index}`}>{renderInlineText(line)}</li>
       ))}
     </ul>
   );
@@ -83,21 +192,73 @@ function useIsomorphicLayoutEffect(effect: () => void | (() => void), deps: unkn
   hook(effect, deps);
 }
 
-export function ResumePreview({ resume, exportContainerRef }: ResumePreviewProps) {
+function paginateBlocks(
+  blocks: Array<ResumeBlock & { height: number }>,
+  contentHeight: number,
+): PaginationResult {
+  const nextPages: string[][] = [];
+  let currentPage: string[] = [];
+  let currentHeight = 0;
+
+  blocks.forEach((block) => {
+    const normalizedHeight = Math.max(block.height, 1);
+    const shouldStartNewPage =
+      currentPage.length > 0 && currentHeight + normalizedHeight > contentHeight;
+
+    if (shouldStartNewPage) {
+      nextPages.push(currentPage);
+      currentPage = [];
+      currentHeight = 0;
+    }
+
+    currentPage.push(block.key);
+    currentHeight += normalizedHeight;
+  });
+
+  if (currentPage.length > 0) {
+    nextPages.push(currentPage);
+  }
+
+  return {
+    pages: nextPages.length > 0 ? nextPages : [[]],
+    pageCount: nextPages.length || 1,
+  };
+}
+
+export function ResumePreview({
+  resume,
+  templateId = 'blueSinglePage',
+  exportContainerRef,
+  onPageStateChange,
+}: ResumePreviewProps) {
   const basicInfo = resume.basicInfo || {};
   const jobIntention = resume.jobIntention || {};
   const name = text(basicInfo.name, '未命名候选人');
   const position = text(basicInfo.position || jobIntention.position, '目标职位');
   const summary = text(resume.summary);
-  const educationList = resume.educationList || [];
-  const workList = resume.workList || [];
-  const projectList = resume.projectList || [];
-  const campusList = resume.campusList || [];
-  const awardList = resume.awardList || [];
-  const skillList = resume.skillList || [];
+  const educationList = resume.educationList || EMPTY_EDUCATION_LIST;
+  const workList = resume.workList || EMPTY_WORK_LIST;
+  const projectList = resume.projectList || EMPTY_PROJECT_LIST;
+  const campusList = resume.campusList || EMPTY_CAMPUS_LIST;
+  const awardList = resume.awardList || EMPTY_AWARD_LIST;
+  const skillList = resume.skillList || EMPTY_SKILL_LIST;
 
   const blocks = useMemo<ResumeBlock[]>(() => {
     const nextBlocks: ResumeBlock[] = [];
+    const contactItems = [
+      text(basicInfo.phone) ? { icon: <Phone size={13} />, label: basicInfo.phone } : null,
+      text(basicInfo.email) ? { icon: <Mail size={13} />, label: basicInfo.email } : null,
+      text(basicInfo.location || jobIntention.city)
+        ? { icon: <MapPin size={13} />, label: basicInfo.location || jobIntention.city }
+        : null,
+    ].filter(Boolean) as Array<{ icon: ReactNode; label?: string }>;
+    const profileItems = [
+      basicInfo.educationLevel,
+      basicInfo.experience,
+      basicInfo.status,
+      jobIntention.salary ? `期望薪资：${jobIntention.salary}` : '',
+      jobIntention.entryTime ? `到岗：${jobIntention.entryTime}` : '',
+    ].filter((item) => text(item));
 
     nextBlocks.push({
       key: 'header',
@@ -105,35 +266,34 @@ export function ResumePreview({ resume, exportContainerRef }: ResumePreviewProps
       node: (
         <>
           <header className="resume-paper-header">
-            <div>
+            <div className="resume-paper-title">
               <h2>{name}</h2>
               <p>{position}</p>
             </div>
-            <div className="resume-paper-meta">
-              {[basicInfo.experience, basicInfo.educationLevel, basicInfo.status].map((item) => (
-                text(item) ? <span key={item}>{item}</span> : null
-              ))}
-            </div>
+            {profileItems.length > 0 && (
+              <div className="resume-paper-meta">
+                {profileItems.map((item) => (
+                  <span key={item}>{item}</span>
+                ))}
+              </div>
+            )}
           </header>
 
-          <div className="resume-contact-row">
-            {text(basicInfo.phone) && (
-              <span><Phone size={13} />{basicInfo.phone}</span>
-            )}
-            {text(basicInfo.email) && (
-              <span><Mail size={13} />{basicInfo.email}</span>
-            )}
-            {text(basicInfo.location || jobIntention.city) && (
-              <span><MapPin size={13} />{basicInfo.location || jobIntention.city}</span>
-            )}
-          </div>
+          {contactItems.length > 0 && (
+            <div className="resume-contact-row">
+              {contactItems.map((item) => (
+                <span key={item.label}>
+                  {item.icon}
+                  {item.label}
+                </span>
+              ))}
+            </div>
+          )}
 
-          {(jobIntention.position || jobIntention.city || jobIntention.salary || jobIntention.entryTime) && (
+          {(jobIntention.position || jobIntention.city) && (
             <div className="resume-intention-row">
               {jobIntention.position && <span>期望职位：{jobIntention.position}</span>}
               {jobIntention.city && <span>城市：{jobIntention.city}</span>}
-              {jobIntention.salary && <span>薪资：{jobIntention.salary}</span>}
-              {jobIntention.entryTime && <span>到岗：{jobIntention.entryTime}</span>}
             </div>
           )}
         </>
@@ -149,7 +309,7 @@ export function ResumePreview({ resume, exportContainerRef }: ResumePreviewProps
       nextBlocks.push({
         key: 'summary-content',
         kind: 'section_summary',
-        node: <p className="resume-summary">{summary}</p>,
+        node: <p className="resume-summary">{renderInlineText(summary)}</p>,
       });
     }
 
@@ -285,8 +445,8 @@ export function ResumePreview({ resume, exportContainerRef }: ResumePreviewProps
               const label = [text(skill.name, '技能'), text(skill.level)].filter(Boolean).join(' · ');
               return (
                 <span key={`${label}-${index}`} className="resume-preview-skill">
-                  {label}
-                  {skill.description && <small>{skill.description}</small>}
+                  <strong>{renderInlineText(label)}</strong>
+                  {skill.description && <small>{renderInlineText(skill.description)}</small>}
                 </span>
               );
             })}
@@ -319,56 +479,92 @@ export function ResumePreview({ resume, exportContainerRef }: ResumePreviewProps
   ]);
 
   const measureContainerRef = useRef<HTMLDivElement | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
   const [pageBlocks, setPageBlocks] = useState<string[][]>([blocks.map((block) => block.key)]);
+  const [fitMode, setFitMode] = useState<ResumeFitMode>('comfortable');
+  const [overflow, setOverflow] = useState(false);
+  const [previewScale, setPreviewScale] = useState(1);
   const previousSignatureRef = useRef('');
+
+  useEffect(() => {
+    const container = previewScrollRef.current;
+    if (!container) return;
+
+    const updateScale = () => {
+      const availableWidth = container.clientWidth - 36;
+      setPreviewScale(Math.min(1, Math.max(0.58, availableWidth / 794)));
+    };
+
+    updateScale();
+    const observer = new ResizeObserver(updateScale);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
 
   useIsomorphicLayoutEffect(() => {
     const container = measureContainerRef.current;
     if (!container) return;
 
-    const measuredBlocks = blocks.map((block) => {
-      const element = container.querySelector<HTMLElement>(`[data-block-key="${block.key}"]`);
+    const measuredByMode = FIT_MODES.map((mode) => {
+      const paper = container.querySelector<HTMLElement>(`[data-measure-fit-mode="${mode}"]`);
+      const measuredBlocks = blocks.map((block) => {
+        const element = paper?.querySelector<HTMLElement>(`[data-block-key="${block.key}"]`);
+        return {
+          ...block,
+          height: element?.offsetHeight ?? 0,
+        };
+      });
       return {
-        ...block,
-        height: element?.offsetHeight ?? 0,
+        mode,
+        result: paginateBlocks(measuredBlocks, FIT_MODE_CONTENT_HEIGHT[mode]),
       };
     });
 
-    const nextPages: string[][] = [];
-    let currentPage: string[] = [];
-    let currentHeight = 0;
-
-    measuredBlocks.forEach((block) => {
-      const normalizedHeight = Math.max(block.height, 1);
-      const shouldStartNewPage =
-        currentPage.length > 0 && currentHeight + normalizedHeight > PAPER_CONTENT_HEIGHT;
-
-      if (shouldStartNewPage) {
-        nextPages.push(currentPage);
-        currentPage = [];
-        currentHeight = 0;
-      }
-
-      currentPage.push(block.key);
-      currentHeight += normalizedHeight;
+    const singlePageMode = measuredByMode.find((entry) => entry.result.pageCount <= 1);
+    const selected = singlePageMode || measuredByMode[measuredByMode.length - 1];
+    const nextOverflow = selected.result.pageCount > 1;
+    const signature = JSON.stringify({
+      pages: selected.result.pages,
+      fitMode: selected.mode,
+      overflow: nextOverflow,
+      templateId,
     });
 
-    if (currentPage.length > 0) {
-      nextPages.push(currentPage);
-    }
-
-    const signature = JSON.stringify(nextPages);
     if (signature !== previousSignatureRef.current) {
       previousSignatureRef.current = signature;
-      setPageBlocks(nextPages);
+      setPageBlocks(selected.result.pages);
+      setFitMode(selected.mode);
+      setOverflow(nextOverflow);
+      onPageStateChange?.({
+        pageCount: selected.result.pageCount,
+        fitMode: selected.mode,
+        overflow: nextOverflow,
+      });
     }
-  }, [blocks]);
+  }, [blocks, onPageStateChange, templateId]);
 
   const blockMap = useMemo(() => new Map(blocks.map((block) => [block.key, block.node])), [blocks]);
+  const templateClass = templateClassName(templateId);
+  const previewStyle = { '--resume-preview-scale': String(previewScale) } as CSSProperties;
 
   return (
-    <div className="resume-preview-scroll">
-      <div ref={exportContainerRef} className="resume-document" aria-label={`${name} 的简历预览`}>
+    <div ref={previewScrollRef} className="resume-preview-scroll">
+      {overflow && (
+        <div className="resume-overflow-alert" role="status">
+          <AlertTriangle size={15} />
+          <span>内容已使用最紧凑排版仍超过 1 页，建议精简要点；导出 2 页前需要确认。</span>
+        </div>
+      )}
+
+      <div
+        ref={exportContainerRef}
+        className={`resume-document ${templateClass}`}
+        style={previewStyle}
+        data-template-id={templateId}
+        data-fit-mode={fitMode}
+        data-page-count={pageBlocks.length}
+        aria-label={`${name} 的简历预览`}
+      >
         {pageBlocks.map((page, pageIndex) => (
           <div
             key={`page-${pageIndex}`}
@@ -388,14 +584,22 @@ export function ResumePreview({ resume, exportContainerRef }: ResumePreviewProps
         ))}
       </div>
 
-      <div className="resume-measure-layer" aria-hidden="true">
-        <div ref={measureContainerRef} className="resume-paper resume-paper-measure">
-          {blocks.map((block) => (
-            <div key={block.key} data-block-key={block.key} className="resume-page-block">
-              {block.node}
+      <div ref={measureContainerRef} className="resume-measure-layer" aria-hidden="true">
+        {FIT_MODES.map((mode) => (
+          <div
+            key={mode}
+            className={`resume-document resume-document-measure ${templateClass}`}
+            data-fit-mode={mode}
+          >
+            <div className="resume-paper resume-paper-measure" data-measure-fit-mode={mode}>
+              {blocks.map((block) => (
+                <div key={block.key} data-block-key={block.key} className="resume-page-block">
+                  {block.node}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        ))}
       </div>
     </div>
   );

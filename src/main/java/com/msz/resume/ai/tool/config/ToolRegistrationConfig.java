@@ -3,6 +3,7 @@ package com.msz.resume.ai.tool.config;
 import com.msz.resume.ai.chat.tooling.ArtifactTool;
 import com.msz.resume.ai.chat.tooling.AskUserQuestionTool;
 import com.msz.resume.ai.chat.tooling.SpawnAgentTool;
+import com.msz.resume.ai.enterprise.tooling.ExpenseDemoTool;
 import com.msz.resume.ai.tool.impl.GetCurrentTimeTool;
 import com.msz.resume.ai.chat.tooling.MindmapTool;
 import com.msz.resume.ai.integrations.openviking.tooling.OpenVikingSearchTool;
@@ -13,6 +14,7 @@ import com.msz.resume.ai.memory.tooling.ReadUserMemoryTool;
 import com.msz.resume.ai.memory.tooling.RememberUserMemoryTool;
 import com.msz.resume.ai.memory.tooling.RememberUserPreferenceTool;
 import com.msz.resume.ai.resume.tooling.ResumeGuideTool;
+import com.msz.resume.ai.resume.tooling.ResumeEvaluationTool;
 import com.msz.resume.ai.resume.tooling.ResumeOptimizeGuideTool;
 import com.msz.resume.ai.chat.tooling.TaskPlanTool;
 import com.msz.resume.ai.tool.impl.ToolSearchTool;
@@ -49,6 +51,8 @@ public class ToolRegistrationConfig {
     private final RememberUserPreferenceTool rememberUserPreferenceTool;
     private final ResumeGuideTool resumeGuideTool;
     private final ResumeOptimizeGuideTool resumeOptimizeGuideTool;
+    private final ResumeEvaluationTool resumeEvaluationTool;
+    private final ExpenseDemoTool expenseDemoTool;
 
     /**
      * 应用启动后自动注册工具
@@ -90,6 +94,10 @@ public class ToolRegistrationConfig {
         // 注册简历相关工具（核心工具）
         toolRegistry.registerToolsFromObject(resumeGuideTool);
         toolRegistry.registerToolsFromObject(resumeOptimizeGuideTool);
+        toolRegistry.registerToolsFromObject(resumeEvaluationTool);
+
+        // 注册企业端报销/OA Demo 工具（延迟工具）
+        toolRegistry.registerToolsFromObject(expenseDemoTool);
 
         log.info("========== 工具注册完成，共 {} 个工具（核心: {}, 延迟: {}）==========",
                 toolRegistry.getToolCount(),

@@ -6,6 +6,7 @@ import com.msz.resume.ai.integrations.openviking.core.dto.OpenVikingFindResponse
 import com.msz.resume.ai.integrations.openviking.core.dto.OpenVikingReadResponse;
 import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
+import com.msz.resume.ai.chat.session.converter.ChatMessageTextExtractor;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.UserMessage;
 import lombok.RequiredArgsConstructor;
@@ -371,7 +372,7 @@ public class OpenVikingRecallEngine {
             ChatMessage message = messages.get(i);
             if (message instanceof UserMessage userMessage) {
                 try {
-                    return userMessage.singleText();
+                    return ChatMessageTextExtractor.userText(userMessage);
                 } catch (Exception ignored) {
                     return "";
                 }
@@ -409,7 +410,7 @@ public class OpenVikingRecallEngine {
         for (ChatMessage message : messages) {
             if (message instanceof UserMessage userMessage) {
                 try {
-                    String text = userMessage.singleText();
+                    String text = ChatMessageTextExtractor.userText(userMessage);
                     if (hasText(text)) {
                         texts.add(text.trim());
                     }

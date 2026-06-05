@@ -9,6 +9,8 @@ import com.msz.resume.ai.chat.api.dto.ChatStreamEvent;
 import com.msz.resume.ai.chat.api.dto.SessionPinRequest;
 import com.msz.resume.ai.chat.api.dto.SessionRenameRequest;
 import com.msz.resume.ai.chat.api.dto.SessionSummaryResponse;
+import com.msz.resume.ai.chat.session.converter.AttachmentMetadata;
+import com.msz.resume.ai.chat.session.converter.ChatMessageTextExtractor;
 import com.msz.resume.ai.chat.runtime.trace.ChatStreamEventSink;
 import com.msz.resume.ai.chat.runtime.trace.ChatRunTraceContext;
 import com.msz.resume.ai.chat.runtime.trace.ChatStreamContext;
@@ -18,6 +20,8 @@ import com.msz.resume.ai.chat.runtime.trace.stream.TraceReplayService;
 import com.msz.resume.ai.chat.runtime.trace.stream.TimelineActionRecorderFactory;
 import com.msz.resume.ai.chat.runtime.trace.TraceAgentDescriptor;
 import com.msz.resume.ai.chat.runtime.trace.TraceService;
+import com.msz.resume.ai.chat.runtime.trace.langfuse.LangfuseTracingService;
+import com.msz.resume.ai.file.dto.ParsedFile;
 import com.msz.resume.ai.file.service.FileStorageService;
 import com.msz.resume.ai.integrations.openviking.core.context.OpenVikingIdentityContextHolder;
 import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
@@ -32,7 +36,10 @@ import com.msz.resume.ai.chat.tooling.AskUserQuestionParser;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
+import dev.langchain4j.data.message.Content;
+import dev.langchain4j.data.message.ImageContent;
 import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.ToolExecutionResultMessage;
 import dev.langchain4j.data.message.UserMessage;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +47,7 @@ import org.bsc.langgraph4j.CompiledGraph;
 import org.bsc.langgraph4j.NodeOutput;
 import org.bsc.langgraph4j.RunnableConfig;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -69,6 +77,8 @@ import java.util.concurrent.CompletableFuture;
 @RestController
 @RequestMapping("/api/claude")
 public class ClaudeController {
+    private static final int MAX_IMAGE_ATTACHMENTS = 10;
+    private static final long MAX_TOTAL_IMAGE_ATTACHMENT_BYTES = 25L * 1024L * 1024L;
     /**
      * 注入编译好的外层图
      * 这是状态机的入口，通过它可以执行整个对话流程
@@ -83,8 +93,10 @@ public class ClaudeController {
     private final AskUserQuestionParser askUserQuestionParser;
     private final FileStorageService fileStorageService;
     private final TraceService traceService;
+    private final LangfuseTracingService langfuseTracingService;
     private final TimelineActionRecorderFactory timelineActionRecorderFactory;
     private final TraceReplayService traceReplayService;
+    private final long chatStreamTimeoutMs;
 
     /** 注入聊天主流程和 trace 相关依赖，组装控制器需要的全链路能力。 */
     public ClaudeController(CompiledGraph<SessionState> queryEngineGraph,
@@ -96,8 +108,10 @@ public class ClaudeController {
                             AskUserQuestionParser askUserQuestionParser,
                             FileStorageService fileStorageService,
                             TraceService traceService,
+                            LangfuseTracingService langfuseTracingService,
                             TimelineActionRecorderFactory timelineActionRecorderFactory,
-                            TraceReplayService traceReplayService) {
+                            TraceReplayService traceReplayService,
+                            @Value("${jarvis.chat.stream-timeout-ms:600000}") long chatStreamTimeoutMs) {
         this.queryEngineGraph = queryEngineGraph;
         this.persistenceService = persistenceService;
         this.openVikingSessionGateway = openVikingSessionGateway;
@@ -107,8 +121,10 @@ public class ClaudeController {
         this.askUserQuestionParser = askUserQuestionParser;
         this.fileStorageService = fileStorageService;
         this.traceService = traceService;
+        this.langfuseTracingService = langfuseTracingService;
         this.timelineActionRecorderFactory = timelineActionRecorderFactory;
         this.traceReplayService = traceReplayService;
+        this.chatStreamTimeoutMs = chatStreamTimeoutMs;
     }
 
 
@@ -157,6 +173,7 @@ public class ClaudeController {
                 innerInput.put(QueryLoopState.MESSAGE_HISTORY, snapshot.messages());
                 innerInput.put(QueryLoopState.TASK_PLAN, snapshot.state().getInnerState().getTaskPlan());
                 innerInput.put(QueryLoopState.SURFACED_OPENVIKING_URIS, snapshot.state().getInnerState().getSurfacedOpenVikingUris());
+                innerInput.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, snapshot.state().getInnerState().getLlmContextCheckpoint());
                 innerInput.put(QueryLoopState.OPENVIKING_IDENTITY, identity);
                 innerState = new QueryLoopState(innerInput);
                 log.info("[会话恢复] 从数据库恢复历史消息数: {}", snapshot.messages().size());
@@ -172,19 +189,12 @@ public class ClaudeController {
             Map<String, Object> innerInput = new HashMap<>();
             List<ChatMessage> messages = new ArrayList<>(innerState.getMessages());// 获取之前的内层状态的聊天消息
 
-            // ========== 3.1 处理关联的文件 ==========
-            // 如果请求中包含 fileId，获取文件内容并注入到消息中
-            String userMessage = request.getUserMessage();
-            String fileId = request.getFileId();
-            if (fileId != null && !fileId.isBlank()) {
-                userMessage = injectFileContent(fileId, userMessage);
-            }
-
-            messages.add(UserMessage.from(userMessage));
+            UserMessage userMessage = buildUserMessage(request);
+            messages.add(userMessage);
 
             // ========== 3.1 追加用户消息到 OpenViking Session（最佳努力） ==========
             try {
-                openVikingSessionGateway.appendUserMessage(sessionId, request.getUserMessage(), identity);
+                openVikingSessionGateway.appendUserMessage(sessionId, ChatMessageTextExtractor.userText(userMessage), identity);
             } catch (Exception e) {
                 log.warn("[OpenViking] appendUserMessage 异常: sessionId={}, error={}", sessionId, e.getMessage());
             }
@@ -193,6 +203,7 @@ public class ClaudeController {
             innerInput.put(QueryLoopState.MESSAGE_HISTORY, messages);
             innerInput.put(QueryLoopState.TASK_PLAN, innerState.getTaskPlan());
             innerInput.put(QueryLoopState.SURFACED_OPENVIKING_URIS, innerState.getSurfacedOpenVikingUris());
+            innerInput.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, innerState.getLlmContextCheckpoint());
             innerInput.put(QueryLoopState.OPENVIKING_IDENTITY, identity);
             QueryLoopState newInnerState = new QueryLoopState(innerInput);
 
@@ -238,15 +249,10 @@ public class ClaudeController {
             }
 
             // ========== 8. 提取AI回复 ==========
-            // 从消息列表中找到最后一条AI消息  extractLastAiMessage可以返回AI消息
-
             List<ChatMessage> finalMessages = finalInnerState.getMessages();
             List<ChatArtifact> artifacts = ArtifactResponseExtractor.extractLatestArtifacts(finalMessages, objectMapper);
-            String aiMessageContent = ArtifactResponseExtractor.stripPureArtifactText(
-                    extractLastAiMessage(finalMessages),
-                    artifacts,
-                    objectMapper
-            );
+            String aiMessageContent = ArtifactResponseExtractor.extractVisibleAssistantText(
+                    finalMessages, artifacts, objectMapper);
             String mindmapData = ArtifactResponseExtractor.extractLatestArtifactData(artifacts, "mindmap", objectMapper);
             if (mindmapData == null) {
                 mindmapData = MindmapResponseExtractor.extractLatestMindmapData(finalMessages, objectMapper);
@@ -347,24 +353,54 @@ public class ClaudeController {
                                  @RequestParam(required = false) String outputStyle,
                                  @RequestParam(required = false) String fileId,
                                  HttpServletRequest httpServletRequest) {
+        ChatRequest request = new ChatRequest();
+        request.setSessionId(sessionId);
+        request.setUserMessage(userMessage);
+        request.setLanguage(language);
+        request.setOutputStyle(outputStyle);
+        request.setFileId(fileId);
+        return chatStreamInternal(request, httpServletRequest);
+    }
 
+    @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter chatStreamPost(@RequestBody ChatRequest request,
+                                     HttpServletRequest httpServletRequest) {
+        return chatStreamInternal(request, httpServletRequest);
+    }
+
+    private SseEmitter chatStreamInternal(ChatRequest request,
+                                          HttpServletRequest httpServletRequest) {
+        if (request == null) {
+            request = new ChatRequest();
+        }
+        String sessionId = request.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            sessionId = UUID.randomUUID().toString();
+            request.setSessionId(sessionId);
+        }
+        String userMessage = request.getUserMessage() != null ? request.getUserMessage() : "";
+        String language = request.getLanguage();
+        String outputStyle = request.getOutputStyle();
         Account currentAccount = currentAccountResolver.requireCurrentAccount(httpServletRequest, "chat/stream");
         OpenVikingIdentity identity = openVikingIdentityResolver.resolve(currentAccount);
         UserProfile userContext = buildUserProfile(currentAccount, identity, language, outputStyle);
 
-        SseEmitter emitter = new SseEmitter(180 * 1000L);
+        SseEmitter emitter = new SseEmitter(chatStreamTimeoutMs);
         InMemoryTimelineActionRecorder timelineActionRecorder = new InMemoryTimelineActionRecorder();
         TimelineActionRecorder recorder = timelineActionRecorderFactory.withTraceStream(sessionId, timelineActionRecorder);
         ChatStreamEventSink sink = new ChatStreamEventSink(emitter, objectMapper, sessionId, recorder);
         String runId = UUID.randomUUID().toString();
         ChatRunTraceContext traceContext = new ChatRunTraceContext(runId, sessionId, sink);
+        langfuseTracingService.startTrace(traceContext, currentAccount.getUsername(), userMessage);
+        ChatRequest streamRequest = request;
+        String effectiveSessionId = sessionId;
 
         CompletableFuture.runAsync(() -> {
             SessionState finalSessionState = null;
             try {
                 OpenVikingIdentityContextHolder.set(identity);
-                ChatStreamContext.bindRun(sessionId, traceContext);
-                sendBestEffort(sessionId, sink, ignored ->
+                ChatStreamContext.bindRun(effectiveSessionId, traceContext);
+                sendBestEffort(effectiveSessionId, sink, ignored ->
                         sink.send("session_started", Map.of(
                                 "status", "started",
                                 "streaming", true,
@@ -373,13 +409,14 @@ public class ClaudeController {
                 traceService.startLlmRound(traceContext, TraceAgentDescriptor.mainAgent());
 
                 // 从数据库恢复会话，构造输入数据
-                SessionSnapshot snapshot = persistenceService.restoreSession(sessionId, currentAccount.getUsername());
+                SessionSnapshot snapshot = persistenceService.restoreSession(effectiveSessionId, currentAccount.getUsername());
                 QueryLoopState innerState;
                 if (snapshot != null) {
                     Map<String, Object> innerInput = new HashMap<>();
                     innerInput.put(QueryLoopState.MESSAGE_HISTORY, snapshot.messages());
                     innerInput.put(QueryLoopState.TASK_PLAN, snapshot.state().getInnerState().getTaskPlan());
                     innerInput.put(QueryLoopState.SURFACED_OPENVIKING_URIS, snapshot.state().getInnerState().getSurfacedOpenVikingUris());
+                    innerInput.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, snapshot.state().getInnerState().getLlmContextCheckpoint());
                     innerInput.put(QueryLoopState.OPENVIKING_IDENTITY, identity);
                     innerInput.put(QueryLoopState.TRACE_RUN_ID, runId);
                     innerInput.put(QueryLoopState.TRACE_AGENT_ID, "main");
@@ -395,18 +432,17 @@ public class ClaudeController {
                     innerState = new QueryLoopState(freshInput);
                 }
 
-                // 处理关联的文件
-                String finalUserMessage = userMessage;
-                if (fileId != null && !fileId.isBlank()) {
-                    finalUserMessage = injectFileContent(fileId, userMessage);
-                }
+                UserMessage finalUserMessage = buildUserMessage(streamRequest);
+                String finalUserMessageText = ChatMessageTextExtractor.userText(finalUserMessage);
+                langfuseTracingService.updateTraceInput(traceContext, finalUserMessageText);
 
                 Map<String, Object> innerInput = new HashMap<>();
                 List<ChatMessage> messages = new ArrayList<>(innerState.getMessages());
-                messages.add(UserMessage.from(finalUserMessage));
+                messages.add(finalUserMessage);
                 innerInput.put(QueryLoopState.MESSAGE_HISTORY, messages);
                 innerInput.put(QueryLoopState.TASK_PLAN, innerState.getTaskPlan());
                 innerInput.put(QueryLoopState.SURFACED_OPENVIKING_URIS, innerState.getSurfacedOpenVikingUris());
+                innerInput.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, innerState.getLlmContextCheckpoint());
                 innerInput.put(QueryLoopState.OPENVIKING_IDENTITY, identity);
                 innerInput.put(QueryLoopState.TRACE_RUN_ID, runId);
                 innerInput.put(QueryLoopState.TRACE_AGENT_ID, innerState.getTraceAgentId());
@@ -416,21 +452,21 @@ public class ClaudeController {
 
                 // ========== 追加用户消息到 OpenViking Session（最佳努力） ==========
                 try {
-                    openVikingSessionGateway.appendUserMessage(sessionId, userMessage, identity);
+                    openVikingSessionGateway.appendUserMessage(effectiveSessionId, finalUserMessageText, identity);
                 } catch (Exception e) {
-                    log.warn("[OpenViking] appendUserMessage 异常 (SSE): sessionId={}, error={}", sessionId, e.getMessage());
+                    log.warn("[OpenViking] appendUserMessage 异常 (SSE): sessionId={}, error={}", effectiveSessionId, e.getMessage());
                 }
 
                 Map<String, Object> sessionInput = new HashMap<>();
-                sessionInput.put(SessionState.SESSION_ID, sessionId);
+                sessionInput.put(SessionState.SESSION_ID, effectiveSessionId);
                 sessionInput.put(SessionState.INNER_STATE, newInnerState);
                 sessionInput.put(SessionState.USER_CONTEXT, userContext);
                 sessionInput.put(SessionState.OPENVIKING_IDENTITY, identity);
-                RunnableConfig runConfig = RunnableConfig.builder().threadId(sessionId).build();
+                RunnableConfig runConfig = RunnableConfig.builder().threadId(effectiveSessionId).build();
 
                 List<Map<String, Object>> lastSentTaskPlan = Collections.emptyList();
                 for (NodeOutput<SessionState> output : queryEngineGraph.stream(sessionInput, runConfig)) {
-                    log.info("[SSE执行步骤] 节点: {}, 会话ID: {}", output.node(), sessionId);
+                    log.info("[SSE执行步骤] 节点: {}, 会话ID: {}", output.node(), effectiveSessionId);
                     finalSessionState = output.state();
                     if (!sink.isClosed() && finalSessionState != null && finalSessionState.getInnerState() != null) {
                         lastSentTaskPlan = sendTaskUpdateIfChanged(sink, finalSessionState.getInnerState(), lastSentTaskPlan);
@@ -439,7 +475,8 @@ public class ClaudeController {
 
                 if (finalSessionState == null || finalSessionState.getInnerState() == null) {
                     traceService.failMainLlmRound(traceContext);
-                    ChatStreamContext.clear(sessionId);
+                    langfuseTracingService.failTrace(traceContext, "状态机执行失败：返回空结果");
+                    ChatStreamContext.clear(effectiveSessionId);
                     if (!sink.isClosed()) {
                         sink.error("STATE_MACHINE_EMPTY_RESULT", "状态机执行失败：返回空结果");
                         sink.complete();
@@ -451,9 +488,11 @@ public class ClaudeController {
                 if (finalInnerState.getErrorMessage() != null && "terminate".equals(finalInnerState.getTransition())) {
                     traceService.failMainLlmRound(traceContext);
                     String errorType = finalInnerState.getErrorType() != null ? finalInnerState.getErrorType() : "LLM_ERROR";
-                    sendBestEffort(sessionId, sink, ignored ->
-                            sink.error(errorType, finalInnerState.getErrorMessage()));
-                    ChatStreamContext.clear(sessionId);
+                    langfuseTracingService.failTrace(traceContext, finalInnerState.getErrorMessage());
+                    String errorMessage = finalInnerState.getErrorMessage();
+                    sendBestEffort(effectiveSessionId, sink, ignored ->
+                            sink.error(errorType, errorMessage));
+                    ChatStreamContext.clear(effectiveSessionId);
                     if (!sink.isClosed()) {
                         sink.complete();
                     }
@@ -462,11 +501,8 @@ public class ClaudeController {
 
                 List<ChatMessage> finalMessages = finalInnerState.getMessages();
                 List<ChatArtifact> artifacts = ArtifactResponseExtractor.extractLatestArtifacts(finalMessages, objectMapper);
-                String lastAiContent = ArtifactResponseExtractor.stripPureArtifactText(
-                        extractLastAiMessage(finalMessages),
-                        artifacts,
-                        objectMapper
-                );
+                String lastAiContent = ArtifactResponseExtractor.extractVisibleAssistantText(
+                        finalMessages, artifacts, objectMapper);
                 String mindmapData = ArtifactResponseExtractor.extractLatestArtifactData(artifacts, "mindmap", objectMapper);
                 if (mindmapData == null) {
                     mindmapData = MindmapResponseExtractor.extractLatestMindmapData(finalMessages, objectMapper);
@@ -479,21 +515,21 @@ public class ClaudeController {
                             questionnaireData,
                             artifacts
                     );
-                    sendBestEffort(sessionId, sink, ignored ->
+                    sendBestEffort(effectiveSessionId, sink, ignored ->
                             sink.send("message_done", messageDonePayload));
 
                     // ========== 追加助手消息到 OpenViking Session（最佳努力） ==========
                     if (lastAiContent != null && !lastAiContent.isBlank()) {
                         try {
-                            openVikingSessionGateway.appendAssistantMessage(sessionId, lastAiContent, identity);
+                            openVikingSessionGateway.appendAssistantMessage(effectiveSessionId, lastAiContent, identity);
                         } catch (Exception e) {
-                            log.warn("[OpenViking] appendAssistantMessage 异常 (SSE): sessionId={}, error={}", sessionId, e.getMessage());
+                            log.warn("[OpenViking] appendAssistantMessage 异常 (SSE): sessionId={}, error={}", effectiveSessionId, e.getMessage());
                         }
                     }
                 }
 
                 persistenceService.completeRound(
-                        sessionId,
+                        effectiveSessionId,
                         currentAccount.getUsername(),
                         finalSessionState,
                         finalInnerState.getMessages(),
@@ -502,17 +538,20 @@ public class ClaudeController {
 
                 Map<String, Object> donePayload = buildDonePayload(finalSessionState, finalInnerState);
                 traceService.completeMainLlmRound(traceContext);
-                sendBestEffort(sessionId, sink, ignored ->
+                langfuseTracingService.completeTrace(traceContext,
+                        buildTraceOutput(lastAiContent, mindmapData, questionnaireData, artifacts));
+                sendBestEffort(effectiveSessionId, sink, ignored ->
                         sink.send("done", donePayload));
-                ChatStreamContext.clear(sessionId);
+                ChatStreamContext.clear(effectiveSessionId);
                 if (!sink.isClosed()) {
                     sink.complete();
                 }
 
             } catch (Exception e) {
-                log.error("[SSE执行异常] sessionId={}, error={}", sessionId, e.getMessage(), e);
+                log.error("[SSE执行异常] sessionId={}, error={}", effectiveSessionId, e.getMessage(), e);
                 traceService.failMainLlmRound(traceContext);
-                ChatStreamContext.clear(sessionId);
+                langfuseTracingService.failTrace(traceContext, e.getMessage());
+                ChatStreamContext.clear(effectiveSessionId);
                 if (!sink.isClosed()) {
                     sink.error("STREAM_EXECUTION_ERROR", e.getMessage());
                     sink.complete();
@@ -661,29 +700,6 @@ public class ClaudeController {
 // =============================================== 辅助方法（修复版 - 旧版 LangChain4j） ==================================================
 
     /**
-     * 从消息列表中提取最后一条AI消息
-     *
-     * @param messages 消息列表
-     * @return AI消息内容，如果没有则返回null
-     */
-    private String extractLastAiMessage(List<ChatMessage> messages) {
-        if (messages == null || messages.isEmpty()) {
-            return null;
-        }
-        // 从后往前找最后一条有实质内容的AI消息，跳过空文本的 AiMessage。
-        for (int i = messages.size() - 1; i >= 0; i--) {
-            ChatMessage msg = messages.get(i);
-            if (msg instanceof AiMessage aiMsg) {
-                String text = aiMsg.text();
-                if (text != null && !text.isBlank()) {
-                    return text;
-                }
-            }
-        }
-        return null;
-    }
-
-    /**
      * 格式化消息用于返回给前端
      *
      * @param msg 消息对象
@@ -719,7 +735,11 @@ public class ClaudeController {
                 }
             }
         } else if (msg instanceof UserMessage userMsg) {
-            content = userMsg.singleText();
+            content = ChatMessageTextExtractor.userText(userMsg);
+            List<Map<String, Object>> attachments = userAttachments(userMsg);
+            if (!attachments.isEmpty()) {
+                formatted.put("attachments", attachments);
+            }
         } else if (msg instanceof SystemMessage sysMsg) {
             content = sysMsg.text();
         } else if (msg instanceof ToolExecutionResultMessage toolMsg) {
@@ -757,6 +777,16 @@ public class ClaudeController {
         }
 
         Map<String, Object> formatted = formatMessage(historyMessage.message());
+        if (historyMessage.record() != null
+                && historyMessage.record().getAttachmentsJson() != null
+                && !historyMessage.record().getAttachmentsJson().isBlank()) {
+            try {
+                formatted.put("attachments", objectMapper.readValue(historyMessage.record().getAttachmentsJson(), List.class));
+            } catch (Exception e) {
+                log.warn("[ClaudeController] 历史附件解析失败: messageId={}, error={}",
+                        historyMessage.record().getId(), e.getMessage());
+            }
+        }
         if (historyMessage.record() != null && historyMessage.record().getId() != null) {
             formatted.put("id", "history-message-" + historyMessage.record().getId());
         }
@@ -888,6 +918,30 @@ public class ClaudeController {
         return payload;
     }
 
+    /** 用前端可见结果生成 Langfuse root trace output，避免纯 artifact 回复被记为空输出。 */
+    private String buildTraceOutput(
+            String content,
+            String mindmapData,
+            String questionnaireData,
+            List<ChatArtifact> artifacts) {
+        Map<String, Object> output = new LinkedHashMap<>();
+        output.put("content", content != null ? content : "");
+        output.put("artifactTypes", artifacts != null
+                ? artifacts.stream().map(ChatArtifact::getType).toList()
+                : List.of());
+        if (mindmapData != null && !mindmapData.isBlank()) {
+            output.put("mindmapData", mindmapData);
+        }
+        if (questionnaireData != null && !questionnaireData.isBlank()) {
+            output.put("questionnaireData", questionnaireData);
+        }
+        try {
+            return objectMapper.writeValueAsString(output);
+        } catch (Exception e) {
+            return content != null ? content : "";
+        }
+    }
+
     /** 统计任务计划进度，方便前端直接展示当前推进情况。 */
     private Map<String, Integer> buildTaskProgress(List<Map<String, Object>> taskPlan) {
         Map<String, Integer> progress = new HashMap<>();
@@ -954,6 +1008,9 @@ public class ClaudeController {
     private String injectFileContent(String fileId, String userMessage) {
         return fileStorageService.get(fileId)
                 .map(parsedFile -> {
+                    if ("image".equals(parsedFile.getFileKind())) {
+                        return userMessage + "\n\n[图片附件会作为视觉输入发送：" + parsedFile.getFileName() + "]";
+                    }
                     if (!parsedFile.isSuccess()) {
                         log.warn("[ClaudeController] 文件解析失败: fileId={}, error={}",
                                 fileId, parsedFile.getErrorMessage());
@@ -963,7 +1020,7 @@ public class ClaudeController {
                     StringBuilder sb = new StringBuilder();
                     sb.append(userMessage);
                     sb.append("\n\n---\n");
-                    sb.append("📎 文件内容（").append(parsedFile.getFileName()).append("）：\n");
+                    sb.append("文件内容（").append(parsedFile.getFileName()).append("）：\n");
                     sb.append("---\n");
                     sb.append(parsedFile.getContent());
                     sb.append("\n---");
@@ -977,6 +1034,121 @@ public class ClaudeController {
                     log.warn("[ClaudeController] 文件不存在或已过期: fileId={}", fileId);
                     return userMessage + "\n\n[文件不存在或已过期，请重新上传]";
                 });
+    }
+
+    UserMessage buildUserMessage(ChatRequest request) {
+        String text = request.getUserMessage() != null ? request.getUserMessage() : "";
+        String promptText = text;
+        String fileId = request.getFileId();
+        if (fileId != null && !fileId.isBlank()) {
+            promptText = injectFileContent(fileId, promptText);
+        }
+
+        List<String> requestedImageIds = imageAttachmentIds(request);
+        List<String> imageIds = requestedImageIds.size() > MAX_IMAGE_ATTACHMENTS
+                ? requestedImageIds.subList(0, MAX_IMAGE_ATTACHMENTS)
+                : requestedImageIds;
+        List<Content> contents = new ArrayList<>();
+        List<AttachmentMetadata> attachments = new ArrayList<>();
+        StringBuilder textBuilder = new StringBuilder(promptText);
+        if (requestedImageIds.size() > MAX_IMAGE_ATTACHMENTS) {
+            textBuilder.append("\n\n[图片附件超过最多 ")
+                    .append(MAX_IMAGE_ATTACHMENTS)
+                    .append(" 张限制，已忽略后续图片]");
+        }
+
+        long totalImageBytes = 0;
+        for (String imageId : imageIds) {
+            Optional<ParsedFile> parsedFile = fileStorageService.get(imageId);
+            if (parsedFile.isEmpty()) {
+                textBuilder.append("\n\n[图片已过期或不存在：").append(imageId).append("]");
+                attachments.add(AttachmentMetadata.builder()
+                        .fileId(imageId)
+                        .fileKind("image")
+                        .available(false)
+                        .build());
+                continue;
+            }
+            ParsedFile image = parsedFile.get();
+            if (!image.isSuccess() || !"image".equals(image.getFileKind()) || image.getBase64Data() == null) {
+                textBuilder.append("\n\n[图片处理失败：")
+                        .append(image.getFileName() != null ? image.getFileName() : imageId)
+                        .append("]");
+                attachments.add(toAttachmentMetadata(image, false));
+                continue;
+            }
+            if (totalImageBytes + image.getFileSize() > MAX_TOTAL_IMAGE_ATTACHMENT_BYTES) {
+                textBuilder.append("\n\n[图片附件总大小超过 25MB 限制，已忽略：")
+                        .append(image.getFileName() != null ? image.getFileName() : imageId)
+                        .append("]");
+                attachments.add(toAttachmentMetadata(image, false));
+                continue;
+            }
+            contents.add(ImageContent.from(image.getBase64Data(), image.getMimeType()));
+            attachments.add(toAttachmentMetadata(image, true));
+            totalImageBytes += image.getFileSize();
+        }
+
+        List<Content> orderedContents = new ArrayList<>();
+        orderedContents.add(TextContent.from(textBuilder.toString()));
+        orderedContents.addAll(contents);
+
+        UserMessage.Builder builder = UserMessage.builder().contents(orderedContents);
+        if (!attachments.isEmpty()) {
+            builder.attributes(Map.of("attachments", attachments));
+        }
+        return builder.build();
+    }
+
+    private List<String> imageAttachmentIds(ChatRequest request) {
+        LinkedHashSet<String> ids = new LinkedHashSet<>();
+        if (request.getImageFileIds() != null) {
+            ids.addAll(request.getImageFileIds());
+        }
+        if (request.getAttachmentIds() != null) {
+            ids.addAll(request.getAttachmentIds());
+        }
+        ids.removeIf(id -> id == null || id.isBlank() || id.equals(request.getFileId()));
+        return new ArrayList<>(ids);
+    }
+
+    private AttachmentMetadata toAttachmentMetadata(ParsedFile parsedFile, boolean available) {
+        if (parsedFile == null) {
+            return AttachmentMetadata.builder().fileKind("image").available(false).build();
+        }
+        return AttachmentMetadata.builder()
+                .fileId(parsedFile.getFileId())
+                .fileName(parsedFile.getFileName())
+                .fileType(parsedFile.getFileType())
+                .fileKind(parsedFile.getFileKind())
+                .mimeType(parsedFile.getMimeType())
+                .fileSize(parsedFile.getFileSize())
+                .available(available)
+                .build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> userAttachments(UserMessage userMessage) {
+        if (userMessage == null || userMessage.attributes() == null) {
+            return List.of();
+        }
+        Object rawAttachments = userMessage.attributes().get("attachments");
+        if (!(rawAttachments instanceof List<?> rawList) || rawList.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Object item : rawList) {
+            if (item instanceof AttachmentMetadata metadata) {
+                result.add(objectMapper.convertValue(metadata, Map.class));
+            } else if (item instanceof Map<?, ?> map) {
+                Map<String, Object> normalized = new LinkedHashMap<>();
+                for (Map.Entry<?, ?> entry : map.entrySet()) {
+                    normalized.put(String.valueOf(entry.getKey()), entry.getValue());
+                }
+                result.add(normalized);
+            }
+        }
+        return result;
     }
 
     /** 根据当前登录用户和租户身份组装出系统提示词需要的用户画像。 */

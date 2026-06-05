@@ -59,6 +59,9 @@ server:
 
 # JARVIS LLM 配置
 jarvis:
+  chat:
+    # Resume generation + evaluation can legitimately exceed 3 minutes when the scoring sub-agent calls an LLM.
+    stream-timeout-ms: ${JARVIS_CHAT_STREAM_TIMEOUT_MS:600000}
   llm:
     # 当前使用的模型提供商：zhipu（智谱）、dashscope（通义千问）、gpt（OpenAI Responses 兼容）或 qianfan-coding-plan（千帆 Coding Plan）
     provider: ${JARVIS_LLM_PROVIDER:gpt}
@@ -70,16 +73,21 @@ jarvis:
       timeout: 60
       temperature: 0.2
       max-tokens: 4096
+      log-requests: ${BIGMODEL_LOG_REQUESTS:false}
+      log-responses: ${BIGMODEL_LOG_RESPONSES:false}
     # 通义千问配置（备用）
     dashscope:
       model: qwen-max
     # GPT 配置（OpenAI Responses API 兼容）
     gpt:
       api-key: ${OPENAI_API_KEY:}
-      model: ${OPENAI_MODEL:gpt-5.4-mini}
-      base-url: ${OPENAI_BASE_URL:https://api.vip1129.cc/v1}
+      model: ${OPENAI_MODEL:gpt-5.4}
+      base-url: ${OPENAI_BASE_URL:https://ai-pixel.online/v1}
       wire-api: ${OPENAI_WIRE_API:chat}
       timeout: ${OPENAI_TIMEOUT:120}
+      reasoning-effort: ${OPENAI_REASONING_EFFORT:high}
+      log-requests: ${OPENAI_LOG_REQUESTS:false}
+      log-responses: ${OPENAI_LOG_RESPONSES:false}
     # 千帆 Coding Plan 配置（OpenAI Chat Completions 兼容）
     qianfan-coding-plan:
       api-key: ${QIANFAN_OPENAI_API_KEY:}
@@ -87,6 +95,8 @@ jarvis:
       base-url: https://qianfan.baidubce.com/v2/coding
       wire-api: chat
       timeout: 120
+      log-requests: ${QIANFAN_LOG_REQUESTS:false}
+      log-responses: ${QIANFAN_LOG_RESPONSES:false}
   mcp:
     enabled: ${JARVIS_MCP_ENABLED:true}
     fail-fast: ${JARVIS_MCP_FAIL_FAST:false}
@@ -109,10 +119,10 @@ jarvis:
           max-text-chars: 20000
           max-blob-chars: 2000
   compression:
-    model-context-window: 1000000
+    model-context-window: 100000
   autocompact:
-    context-window: 1000000
-    reserved-output-tokens: 100000
+    context-window: 100000
+    reserved-output-tokens: 10000
     threshold-offset: 0
   open-viking:
     base-url: ${OPENVIKING_BASE_URL:}
@@ -159,6 +169,15 @@ jarvis:
     max-preview-chars: ${RESOURCE_MAX_PREVIEW_CHARS:100000}        # 100KB 字符
     max-filename-length: 200
   trace:
+    langfuse:
+      enabled: ${LANGFUSE_ENABLED:false}
+      base-url: ${LANGFUSE_BASE_URL:https://cloud.langfuse.com}
+      public-key: ${LANGFUSE_PUBLIC_KEY:}
+      secret-key: ${LANGFUSE_SECRET_KEY:}
+      environment: ${LANGFUSE_ENVIRONMENT:${SPRING_PROFILES_ACTIVE:dev}}
+      service-name: ${LANGFUSE_SERVICE_NAME:${spring.application.name:jarvis}}
+      release: ${LANGFUSE_RELEASE:local}
+      export-timeout-ms: ${LANGFUSE_EXPORT_TIMEOUT_MS:5000}
     stream:
       enabled: ${JARVIS_TRACE_STREAM_ENABLED:true}
       consumer-enabled: ${JARVIS_TRACE_STREAM_CONSUMER_ENABLED:true}

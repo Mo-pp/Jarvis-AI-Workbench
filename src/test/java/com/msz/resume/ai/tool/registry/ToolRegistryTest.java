@@ -1,6 +1,7 @@
 package com.msz.resume.ai.tool.registry;
 
 import com.msz.resume.ai.integrations.openviking.core.config.OpenVikingProperties;
+import com.msz.resume.ai.enterprise.tooling.ExpenseDemoTool;
 import com.msz.resume.ai.tool.CoreTool;
 import com.msz.resume.ai.tool.config.ToolRegistrationConfig;
 import com.msz.resume.ai.chat.tooling.ArtifactTool;
@@ -15,10 +16,17 @@ import com.msz.resume.ai.memory.tooling.ReadUserMemoryTool;
 import com.msz.resume.ai.memory.tooling.RememberUserMemoryTool;
 import com.msz.resume.ai.memory.tooling.RememberUserPreferenceTool;
 import com.msz.resume.ai.resume.tooling.ResumeGuideTool;
+import com.msz.resume.ai.resume.tooling.ResumeEvaluationTool;
 import com.msz.resume.ai.resume.tooling.ResumeOptimizeGuideTool;
+import com.msz.resume.ai.resume.evaluation.dto.BatchResumeEvaluationRequest;
+import com.msz.resume.ai.resume.evaluation.dto.CandidateResumeEvaluationCard;
+import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationBundle;
+import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationRequest;
+import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationService;
 import com.msz.resume.ai.chat.tooling.SpawnAgentTool;
 import com.msz.resume.ai.chat.tooling.TaskPlanTool;
 import com.msz.resume.ai.tool.impl.ToolSearchTool;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.agent.tool.Tool;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -284,7 +292,9 @@ class ToolRegistryTest {
                 new RememberUserMemoryTool(userMemoryService),
                 new RememberUserPreferenceTool(new com.msz.resume.ai.integrations.openviking.core.service.OpenVikingMemoryService(openVikingClient)),
                 new ResumeGuideTool(),
-                new ResumeOptimizeGuideTool()
+                new ResumeOptimizeGuideTool(),
+                new ResumeEvaluationTool(new FakeResumeEvaluationService(), new ObjectMapper()),
+                new ExpenseDemoTool()
         );
 
         config.registerAllTools();
@@ -329,6 +339,18 @@ class ToolRegistryTest {
         assertTrue(registry.isCoreTool("getResumeGuide"));
         assertTrue(registry.hasTool("getOptimizeGuide"));
         assertTrue(registry.isCoreTool("getOptimizeGuide"));
+        assertTrue(registry.hasTool("evaluateResume"));
+        assertTrue(registry.isCoreTool("evaluateResume"));
+        assertTrue(registry.hasTool("searchExpensePolicy"));
+        assertTrue(registry.hasTool("parseExpenseAttachment"));
+        assertTrue(registry.hasTool("checkExpenseRules"));
+        assertTrue(registry.hasTool("createExpenseDraft"));
+        assertFalse(registry.isCoreTool("searchExpensePolicy"));
+        assertFalse(registry.isCoreTool("parseExpenseAttachment"));
+        assertFalse(registry.isCoreTool("checkExpenseRules"));
+        assertFalse(registry.isCoreTool("createExpenseDraft"));
+        assertTrue(deferredToolNames.contains("searchExpensePolicy"));
+        assertTrue(deferredToolNames.contains("createExpenseDraft"));
         assertFalse(registry.hasTool("openVikingSearch"));
         assertFalse(deferredToolNames.contains("openVikingSearch"));
     }
@@ -353,6 +375,23 @@ class ToolRegistryTest {
         @Tool("延迟测试工具")
         public String deferredMethod() {
             return "deferred";
+        }
+    }
+
+    static class FakeResumeEvaluationService implements ResumeEvaluationService {
+        @Override
+        public ResumeEvaluationBundle evaluateWithoutJd(ResumeEvaluationRequest request) {
+            return ResumeEvaluationBundle.builder().hasJd(false).build();
+        }
+
+        @Override
+        public ResumeEvaluationBundle evaluateWithJd(ResumeEvaluationRequest request) {
+            return ResumeEvaluationBundle.builder().hasJd(true).build();
+        }
+
+        @Override
+        public List<CandidateResumeEvaluationCard> evaluateBatchWithJd(BatchResumeEvaluationRequest request) {
+            return List.of();
         }
     }
 }

@@ -14,6 +14,7 @@ import com.msz.resume.ai.chat.runtime.node.inner.strategy.ToolExecutionContext;
 import com.msz.resume.ai.chat.runtime.node.inner.strategy.ToolExecutionResult;
 import com.msz.resume.ai.chat.runtime.node.inner.strategy.ToolExecutionStrategy;
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
+import com.msz.resume.ai.chat.runtime.trace.langfuse.LangfuseTracingService;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
@@ -53,15 +54,18 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
     private final List<ToolExecutionStrategy> strategies;
     private final TraceService traceService;
     private final ToolActionEventService toolActionEventService;
+    private final LangfuseTracingService langfuseTracingService;
 
     /** 注入 Hook、执行策略和 trace 事件服务。 */
     public ExecuteToolNode(HookEngine hookEngine,
                            List<ToolExecutionStrategy> strategies,
                            TraceService traceService,
-                           ToolActionEventService toolActionEventService) {
+                           ToolActionEventService toolActionEventService,
+                           LangfuseTracingService langfuseTracingService) {
         this.hookEngine = hookEngine;
         this.traceService = traceService;
         this.toolActionEventService = toolActionEventService;
+        this.langfuseTracingService = langfuseTracingService;
         // 按优先级排序策略（数字越小优先级越高）
         this.strategies = strategies.stream()
                 .sorted(Comparator.comparingInt(ToolExecutionStrategy::getPriority))
@@ -163,6 +167,9 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
             if (preResult.isBlocked()) {
                 log.info("[ExecuteToolNode] PreToolUse Hook 阻断: tool={}, reason={}",
                         req.name(), preResult.blockReason());
+                if (langfuseTracingService != null) {
+                    langfuseTracingService.recordToolResult(traceContext, req, null, "blocked", preResult.blockReason());
+                }
                 if (traceContext != null) {
                     traceService.blockToolCall(traceContext, agentDescriptor, req);
                 }

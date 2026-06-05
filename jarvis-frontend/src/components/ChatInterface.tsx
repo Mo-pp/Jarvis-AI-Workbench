@@ -48,6 +48,7 @@ import type {
   DelegationActionPayload,
   ExistingSkillItem,
   FileUploadResponse,
+  MarkdownArtifact,
   MindmapData,
   OptimizeResult,
   Question,
@@ -56,6 +57,9 @@ import type {
   ResourceDetailResponse,
   ResourceItemResponse,
   ResumeVO,
+  ResumeEvaluationBundle,
+  ResumeQualityEvaluation,
+  JdMatchEvaluation,
   RunStepKind,
   RunStepPayload,
   RunStepStatus,
@@ -64,6 +68,8 @@ import type {
   SkillUploadResponse,
   TaskItem,
   TaskProgress,
+  ThinkingDonePayload,
+  ThinkingStartedPayload,
   ToolUseActionPayload,
   UserAnswer,
 } from '../types';
@@ -142,6 +148,25 @@ type AssistantTimelineItem = AssistantTimelineAction | AssistantActionGroup | As
 
 const DEFAULT_WALLPAPER_URL = 'https://images.unsplash.com/photo-1517685352821-92cf88aee5a5?w=1920&q=80';
 const WALLPAPER_STORAGE_KEY = 'jarvis.wallpaper';
+const INTERVIEWER_DEMO_MARKDOWN: MarkdownArtifact = {
+  type: 'markdown',
+  title: '面试官 Demo',
+  markdown: [
+    '# 面试官 Demo',
+    '',
+    '前端占位版，后续接入后端后可替换为真实面试流程。',
+    '',
+    '## 场景',
+    '- 岗位：Java 后端工程师',
+    '- 目标：模拟面试官追问项目、系统设计和基础能力',
+    '- 输出：问题列表、候选人回答要点、追问建议',
+    '',
+    '## 示例问题',
+    '1. 介绍一个你负责的高并发项目，以及你处理过的核心瓶颈。',
+    '2. 如果缓存和数据库出现短暂不一致，你会怎么定位和兜底？',
+    '3. 你如何证明一次性能优化真的带来了收益？',
+  ].join('\n'),
+};
 
 const KNOWLEDGE_BASE_ACCEPT = [
   '.pdf',
@@ -189,6 +214,9 @@ const KNOWLEDGE_BASE_ACCEPT = [
   '.svelte',
   '.ipynb',
 ].join(',');
+const CHAT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.html,.htm,image/png,image/jpeg,image/webp,image/gif';
+const CHAT_IMAGE_LIMIT = 10;
+const CHAT_IMAGE_TOTAL_LIMIT = 25 * 1024 * 1024;
 
 const ROOT_RESOURCE_PATH = 'viking://resources/';
 const ROOT_WORKSPACE_PATH = 'viking://';
@@ -402,6 +430,7 @@ type StructuredArtifacts = {
   resume?: ResumeVO;
   optimizeResult?: OptimizeResult;
   questionnaire?: QuestionnaireArtifact;
+  markdown?: MarkdownArtifact;
 };
 
 function asStringArray(value: unknown): string[] {
@@ -466,10 +495,13 @@ function normalizeOptimizeResultPayload(payload: unknown): OptimizeResult | null
   const matchAnalysis = isRecord(payload.matchAnalysis) ? payload.matchAnalysis : {};
   const optimizedResume = normalizeResumePayload(payload.optimizedResume);
   const resume = normalizeResumePayload(payload.resume);
+  const normalizedScore = Number.isFinite(rawScore) ? rawScore : undefined;
+  const evaluation = normalizeResumeEvaluationBundle(payload.evaluation)
+    || evaluationFromLegacyOptimizeResult(normalizedScore, matchAnalysis);
 
   return {
     type: 'optimize_result',
-    matchScore: Number.isFinite(rawScore) ? rawScore : undefined,
+    matchScore: normalizedScore,
     matchAnalysis: {
       matchedSkills: asStringArray(matchAnalysis.matchedSkills),
       missingSkills: asStringArray(matchAnalysis.missingSkills),
@@ -477,6 +509,7 @@ function normalizeOptimizeResultPayload(payload: unknown): OptimizeResult | null
       experienceMatch: typeof matchAnalysis.experienceMatch === 'string' ? matchAnalysis.experienceMatch : undefined,
       educationMatch: typeof matchAnalysis.educationMatch === 'string' ? matchAnalysis.educationMatch : undefined,
     },
+    evaluation,
     suggestions: asStringArray(payload.suggestions),
     highlights: asStringArray(payload.highlights),
     optimizedResume: optimizedResume || undefined,
@@ -534,6 +567,149 @@ function normalizeQuestionnairePayload(payload: unknown): QuestionnaireArtifact 
   };
 }
 
+function scoreValue(score?: unknown): number | undefined {
+  const value = typeof score === 'number'
+    ? score
+    : typeof score === 'string'
+      ? Number.parseFloat(score)
+      : undefined;
+  if (!Number.isFinite(value)) return undefined;
+  return Math.min(Math.max(Math.round(value as number), 0), 100);
+}
+
+function normalizeQualityEvaluation(value: unknown): ResumeQualityEvaluation | undefined {
+  if (!isRecord(value)) return undefined;
+  const dimensionScores = isRecord(value.dimensionScores)
+    ? Object.fromEntries(
+        Object.entries(value.dimensionScores)
+          .map(([key, raw]) => [key, scoreValue(raw)])
+          .filter((entry): entry is [string, number] => typeof entry[1] === 'number'),
+      )
+    : undefined;
+  return {
+    score: scoreValue(value.score),
+    summary: typeof value.summary === 'string' ? value.summary : undefined,
+    jdWeight: typeof value.jdWeight === 'number' ? value.jdWeight : value.jdWeight === null ? null : undefined,
+    dimensionScores,
+    strengths: asStringArray(value.strengths),
+    issues: asStringArray(value.issues),
+    suggestions: asStringArray(value.suggestions),
+  };
+}
+
+function normalizeJdMatchEvaluation(value: unknown): JdMatchEvaluation | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    score: scoreValue(value.score),
+    summary: typeof value.summary === 'string' ? value.summary : undefined,
+    matchedSkills: asStringArray(value.matchedSkills),
+    missingRequirements: asStringArray(value.missingRequirements),
+    bonusItems: asStringArray(value.bonusItems),
+    suggestions: asStringArray(value.suggestions),
+  };
+}
+
+function normalizeResumeEvaluationBundle(value: unknown): ResumeEvaluationBundle | undefined {
+  if (!isRecord(value)) return undefined;
+  const quality = normalizeQualityEvaluation(value.quality);
+  const originalResume = normalizeQualityEvaluation(value.originalResume);
+  const generatedResume = normalizeQualityEvaluation(value.generatedResume);
+  const jdMatch = normalizeJdMatchEvaluation(value.jdMatch);
+  if (!quality && !originalResume && !generatedResume && !jdMatch) return undefined;
+  return {
+    quality,
+    originalResume,
+    generatedResume,
+    jdMatch,
+    hasJd: typeof value.hasJd === 'boolean' ? value.hasJd : Boolean(jdMatch),
+    targetPosition: typeof value.targetPosition === 'string' ? value.targetPosition : undefined,
+  };
+}
+
+function evaluationFromLegacyOptimizeResult(score: number | undefined, matchAnalysis: Record<string, unknown>): ResumeEvaluationBundle | undefined {
+  if (typeof score !== 'number' && !isRecord(matchAnalysis)) return undefined;
+  const jdMatch: JdMatchEvaluation = {
+    score,
+    summary: [
+      typeof matchAnalysis.experienceMatch === 'string' ? matchAnalysis.experienceMatch : '',
+      typeof matchAnalysis.educationMatch === 'string' ? matchAnalysis.educationMatch : '',
+    ].filter(Boolean).join('\n') || undefined,
+    matchedSkills: asStringArray(matchAnalysis.matchedSkills),
+    missingRequirements: asStringArray(matchAnalysis.missingSkills),
+    bonusItems: asStringArray(matchAnalysis.matchedBonus),
+  };
+  return {
+    jdMatch,
+    hasJd: typeof score === 'number' || Boolean(jdMatch.matchedSkills?.length || jdMatch.missingRequirements?.length),
+  };
+}
+
+function isImageAttachment(file?: Pick<FileUploadResponse, 'fileKind' | 'mimeType'> & { fileType?: string } | null): boolean {
+  const kind = file?.fileKind?.toLowerCase();
+  const mimeType = file?.mimeType?.toLowerCase();
+  const fileType = file?.fileType?.toLowerCase();
+  return kind === 'image' || Boolean(mimeType?.startsWith('image/')) || ['png', 'jpg', 'jpeg', 'webp', 'gif'].includes(fileType || '');
+}
+
+function imageExtensionFromMimeType(mimeType?: string): string {
+  const normalized = mimeType?.toLowerCase() || '';
+  if (normalized === 'image/jpeg') return 'jpg';
+  if (normalized === 'image/png') return 'png';
+  if (normalized === 'image/webp') return 'webp';
+  if (normalized === 'image/gif') return 'gif';
+  return '';
+}
+
+function ensureImageFileName(file: File, index = 0): File {
+  if (!file.type.startsWith('image/')) return file;
+  const extension = imageExtensionFromMimeType(file.type) || 'png';
+  const hasExtension = /\.[a-z0-9]+$/i.test(file.name);
+  if (file.name && hasExtension) return file;
+
+  const baseName = file.name?.trim() || `pasted-image-${Date.now()}-${index + 1}`;
+  return new File([file], `${baseName}.${extension}`, {
+    type: file.type || `image/${extension}`,
+    lastModified: file.lastModified || Date.now(),
+  });
+}
+
+function getAttachmentName(attachment: { fileName?: string; mimeType?: string; fileId?: string }): string {
+  return attachment.fileName || attachment.mimeType || attachment.fileId || '图片附件';
+}
+
+function revokeLocalAttachmentPreview(file?: { previewUrl?: string } | null) {
+  if (file?.previewUrl?.startsWith('blob:')) {
+    URL.revokeObjectURL(file.previewUrl);
+  }
+}
+
+function localAttachmentPreviewUrls(files?: Array<{ previewUrl?: string }> | null): string[] {
+  if (!files?.length) return [];
+  return files
+    .map((file) => file.previewUrl)
+    .filter((previewUrl): previewUrl is string => Boolean(previewUrl?.startsWith('blob:')));
+}
+
+function normalizeMarkdownPayload(payload: unknown): MarkdownArtifact | null {
+  if (!isRecord(payload)) return null;
+
+  const type = typeof payload.type === 'string' ? payload.type.toLowerCase() : '';
+  if (type !== 'markdown') return null;
+
+  const markdown = typeof payload.markdown === 'string' ? cleanMarkdown(payload.markdown) : '';
+  if (!markdown) return null;
+
+  const title = typeof payload.title === 'string' && payload.title.trim()
+    ? payload.title.trim()
+    : undefined;
+
+  return {
+    type: 'markdown',
+    markdown,
+    title,
+  };
+}
+
 function normalizeStructuredPayload(payload: unknown, requireExplicitType = false): StructuredArtifacts | null {
   if (!isRecord(payload)) return null;
 
@@ -549,9 +725,21 @@ function normalizeStructuredPayload(payload: unknown, requireExplicitType = fals
       artifacts.optimizeResult = optimizeResult;
       artifacts.resume = optimizeResult.optimizedResume || optimizeResult.resume || undefined;
     }
+  } else if (type === 'resume_evaluation') {
+    const evaluation = normalizeResumeEvaluationBundle(payload);
+    if (evaluation) {
+      artifacts.optimizeResult = {
+        type: 'optimize_result',
+        evaluation,
+        matchScore: evaluation.jdMatch?.score,
+      };
+    }
   } else if (type === 'questionnaire') {
     const questionnaire = normalizeQuestionnairePayload(payload);
     if (questionnaire) artifacts.questionnaire = questionnaire;
+  } else if (type === 'markdown') {
+    const markdown = normalizeMarkdownPayload(payload);
+    if (markdown) artifacts.markdown = markdown;
   } else if (!requireExplicitType && !type) {
     const resume = normalizeResumePayload(payload);
     if (resume) artifacts.resume = resume;
@@ -559,7 +747,7 @@ function normalizeStructuredPayload(payload: unknown, requireExplicitType = fals
     if (optimizeResult) artifacts.optimizeResult = optimizeResult;
   }
 
-  return artifacts.resume || artifacts.optimizeResult || artifacts.questionnaire ? artifacts : null;
+  return artifacts.resume || artifacts.optimizeResult || artifacts.questionnaire || artifacts.markdown ? artifacts : null;
 }
 
 function mergeArtifacts(current: StructuredArtifacts | null, next: StructuredArtifacts | null): StructuredArtifacts | null {
@@ -569,6 +757,7 @@ function mergeArtifacts(current: StructuredArtifacts | null, next: StructuredArt
     resume: next.resume || current.resume,
     optimizeResult: next.optimizeResult || current.optimizeResult,
     questionnaire: next.questionnaire || current.questionnaire,
+    markdown: next.markdown || current.markdown,
   };
 }
 
@@ -586,6 +775,41 @@ function collectArtifactJsonCandidates(text: string): Set<string> {
   const fencedJsonRegex = /```(?:\w+)?\s*\n([\s\S]*?)```/gi;
   for (const match of text.matchAll(fencedJsonRegex)) {
     if (match[1]) candidates.add(match[1].trim());
+  }
+
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '{') continue;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === '\\') {
+          escaped = true;
+        } else if (char === '"') {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (char === '"') {
+        inString = true;
+      } else if (char === '{') {
+        depth += 1;
+      } else if (char === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          const candidate = text.slice(start, index + 1).trim();
+          if (candidate.includes('"type"')) candidates.add(candidate);
+          start = index;
+          break;
+        }
+      }
+    }
   }
 
   return candidates;
@@ -707,10 +931,11 @@ function isMindmapOnlyContent(content: string, mindmap: MindmapData | null): boo
 }
 
 function getStructuredDisplayContent(artifacts: StructuredArtifacts | null): string | null {
-  if (!artifacts?.resume && !artifacts?.optimizeResult && !artifacts?.questionnaire) return null;
+  if (!artifacts?.resume && !artifacts?.optimizeResult && !artifacts?.questionnaire && !artifacts?.markdown) return null;
   if (artifacts.questionnaire) return 'Jarvis 需要你补充一些信息，请点击作答。';
   if (artifacts.optimizeResult) return '已生成简历优化分析，可在工作台查看。';
   if (artifacts.resume) return '已生成简历，可在工作台打开预览和编辑。';
+  if (artifacts.markdown) return '已生成文档，可在工作台打开查看。';
   return null;
 }
 
@@ -724,7 +949,7 @@ function getArtifactAwareDisplayContent(
   const fallback = structuredFallback || (mindmap ? '已生成思维导图，可在工作台打开查看。' : '');
 
   if (!trimmed) return fallback;
-  if (artifacts && parseStructuredArtifactsText(trimmed)) return fallback;
+  if (artifacts && parseStructuredArtifactsText(trimmed)) return fallback || content.replace(/\{[\s\S]*\}/, '').trim();
   if (mindmap && isMindmapOnlyContent(trimmed, mindmap)) return '已生成思维导图，可在工作台打开查看。';
 
   return content;
@@ -757,6 +982,7 @@ function getMessageArtifacts(message: ChatMessage): StructuredArtifacts | null {
     resume: message.resumeData,
     optimizeResult: message.optimizeResult,
     questionnaire: message.questionnaire,
+    markdown: message.markdownArtifact,
   };
 }
 
@@ -1012,10 +1238,15 @@ function formatElapsedTime(milliseconds: number): string {
 }
 
 function getQuestionTypeLabel(type?: string): string {
-  const normalized = (type || '').toLowerCase();
+  const normalized = (type || 'single').toLowerCase();
+  if (normalized === 'single_choice') return '单选题';
+  if (normalized === 'multiple_choice') return '多选题';
+  if (normalized === 'text_input') return '文本题';
+  if (normalized === 'single_or_text') return '单选 / 可填写';
+  if (normalized === 'multiple_or_text') return '多选 / 可填写';
   if (normalized.includes('multiple')) return '多选题';
-  if (normalized.includes('text')) return '文本题';
   if (normalized.includes('confirmation')) return '确认';
+  if (normalized === 'text') return '文本题';
   return '单选题';
 }
 
@@ -1293,11 +1524,13 @@ function normalizeHistory(raw: unknown): ChatMessage[] {
       return;
     }
 
-    const content = pendingArtifacts.resume
-      ? '已生成简历，可在工作台打开预览和编辑。'
-      : pendingArtifacts.optimizeResult
+    const content = pendingArtifacts.optimizeResult
         ? '已生成简历优化分析，可在工作台查看。'
-        : 'Jarvis 需要你补充一些信息，请点击作答。';
+      : pendingArtifacts.resume
+        ? '已生成简历，可在工作台打开预览和编辑。'
+        : pendingArtifacts.markdown
+          ? '已生成文档，可在工作台打开查看。'
+          : 'Jarvis 需要你补充一些信息，请点击作答。';
 
     messages.push({
       id: `history-resume-${index}`,
@@ -1308,6 +1541,7 @@ function normalizeHistory(raw: unknown): ChatMessage[] {
       resumeData: pendingArtifacts.resume,
       optimizeResult: pendingArtifacts.optimizeResult,
       questionnaire: pendingArtifacts.questionnaire,
+      markdownArtifact: pendingArtifacts.markdown,
     });
     pendingArtifacts = null;
   };
@@ -1333,6 +1567,18 @@ function normalizeHistory(raw: unknown): ChatMessage[] {
         : String(rawContent);
     const toolName = typeof item.toolName === 'string' ? item.toolName : '';
     const actions = normalizeHistoryActions(item.actions);
+    const attachments = Array.isArray(item.attachments)
+      ? item.attachments.filter(isRecord).map((attachment) => ({
+          fileId: typeof attachment.fileId === 'string' ? attachment.fileId : undefined,
+          fileName: typeof attachment.fileName === 'string' ? attachment.fileName : undefined,
+          fileType: typeof attachment.fileType === 'string' ? attachment.fileType : undefined,
+          fileKind: typeof attachment.fileKind === 'string' ? attachment.fileKind : undefined,
+          mimeType: typeof attachment.mimeType === 'string' ? attachment.mimeType : undefined,
+          fileSize: typeof attachment.fileSize === 'number' ? attachment.fileSize : undefined,
+          previewUrl: typeof attachment.previewUrl === 'string' ? attachment.previewUrl : undefined,
+          available: typeof attachment.available === 'boolean' ? attachment.available : undefined,
+        }))
+      : [];
     const explicitMindmap = parseMindmapArtifactEnvelopes(item.artifacts) ||
       parseMindmapData(item.mindmapData) ||
       parseMindmapData(item.mindmap);
@@ -1344,7 +1590,10 @@ function normalizeHistory(raw: unknown): ChatMessage[] {
           mergeArtifacts(parseStructuredArtifactsData(item.resumeData), parseStructuredArtifactsData(item.resume)),
           parseStructuredArtifactsData(item.optimizeResult),
         ),
-        parseStructuredArtifactsData(item.questionnaireData || item.questionnaire),
+        mergeArtifacts(
+          parseStructuredArtifactsData(item.questionnaireData || item.questionnaire),
+          parseStructuredArtifactsData(item.markdownData || item.markdownArtifact || item.markdown),
+        ),
     ));
     const artifacts = explicitArtifacts;
 
@@ -1386,6 +1635,7 @@ function normalizeHistory(raw: unknown): ChatMessage[] {
         role,
         content,
         timestamp: new Date(typeof item.timestamp === 'string' || typeof item.timestamp === 'number' ? item.timestamp : Date.now()),
+        attachments,
       });
       return;
     }
@@ -1443,6 +1693,7 @@ function normalizeHistory(raw: unknown): ChatMessage[] {
         resumeData: assistantArtifacts?.resume,
       optimizeResult: assistantArtifacts?.optimizeResult,
       questionnaire: assistantArtifacts?.questionnaire,
+      markdownArtifact: assistantArtifacts?.markdown,
       questionTrace: questionPayload?.length
         ? {
             kind: 'ask_user_question',
@@ -1507,10 +1758,26 @@ function getResumeTabTitle(resume: ResumeVO): string {
 }
 
 function getOptimizeTabTitle(result: OptimizeResult): string {
-  const score = typeof result.matchScore === 'number' && Number.isFinite(result.matchScore)
-    ? `匹配度 ${Math.round(result.matchScore)}`
-    : '优化分析';
-  return score;
+  const jdScore = result.evaluation?.jdMatch?.score;
+  if (typeof jdScore === 'number' && Number.isFinite(jdScore)) {
+    return `JD 匹配 ${Math.round(jdScore)}`;
+  }
+  if (!result.evaluation && typeof result.matchScore === 'number' && Number.isFinite(result.matchScore)) {
+    return `匹配度 ${Math.round(result.matchScore)}`;
+  }
+  return result.evaluation ? '简历评价' : '优化分析';
+}
+
+function getMarkdownTabTitle(artifact: MarkdownArtifact): string {
+  const explicitTitle = artifact.title?.trim();
+  if (explicitTitle) return explicitTitle.length > 16 ? `${explicitTitle.slice(0, 16)}...` : explicitTitle;
+
+  const firstHeading = artifact.markdown
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.startsWith('#'));
+  const title = firstHeading ? firstHeading.replace(/^#+\s*/, '').trim() : 'Markdown 文档';
+  return title.length > 16 ? `${title.slice(0, 16)}...` : title;
 }
 
 function buildResumeOptimizePrompt(resume: ResumeVO, request: ResumeOptimizeRequest): string {
@@ -1520,9 +1787,11 @@ function buildResumeOptimizePrompt(resume: ResumeVO, request: ResumeOptimizeRequ
     '要求：',
     '1. 如需要指南，请调用简历优化指南工具。',
     '2. 优先针对目标岗位和 JD 分析匹配度、缺口、优化建议。',
-    '3. 最终必须返回一个 JSON 对象，不要包裹 Markdown 代码块。',
-    '4. JSON 格式优先为 {"type":"optimize_result","matchScore":0-100,"matchAnalysis":{"matchedSkills":[],"missingSkills":[],"experienceMatch":"","educationMatch":"","matchedBonus":[]},"suggestions":[],"highlights":[],"optimizedResume":{...可选优化后简历...}}。',
-    '5. 如果你直接产出优化后的完整简历，也可以返回 {"type":"resume","resume":{...}}。',
+    '3. 生成 resume 或 optimize_result 后，请调用 evaluateResume 生成新版 evaluation；没有 JD 时不要传 jobDescription，不要输出 JD 匹配度。',
+    '4. 优化时要主动贴近评分标准：繁简适中、结果/影响导向、保留学历与链接加分、突出真实技术难点，有 JD 时重点围绕 JD 必备项和加分项调整。',
+    '5. 最终必须返回一个 JSON 对象，不要包裹 Markdown 代码块。',
+    '6. JSON 格式优先为 {"type":"optimize_result","matchScore":0-100,"matchAnalysis":{"matchedSkills":[],"missingSkills":[],"experienceMatch":"","educationMatch":"","matchedBonus":[]},"suggestions":[],"highlights":[],"optimizedResume":{...可选优化后简历...},"evaluation":{...可选评分结果...}}。',
+    '7. 如果你直接产出优化后的完整简历，也可以返回 {"type":"resume","resume":{...}}。',
     '',
     `目标岗位：${request.targetPosition || resume.jobIntention?.position || resume.basicInfo?.position || '未指定'}`,
     `优化范围：${request.scope || 'full'}`,
@@ -1567,6 +1836,7 @@ type WorkbenchTabBase = {
 
 type WorkbenchTab = WorkbenchTabBase & (
   | { type: 'mindmap'; mindmap: MindmapData }
+  | { type: 'markdown'; markdown: MarkdownArtifact }
   | { type: 'resume'; resume: ResumeVO; optimizeResult?: OptimizeResult }
   | { type: 'optimize_result'; result: OptimizeResult }
 );
@@ -1653,7 +1923,7 @@ export function ChatInterface() {
   const [taskProgress, setTaskProgress] = useState<TaskProgress | undefined>();
   const [runProcess, setRunProcess] = useState<RunProcessState | null>(null);
   const [mainAgentState, setMainAgentState] = useState<MainAgentState>(createIdleMainAgentState);
-  const [attachedFile, setAttachedFile] = useState<FileUploadResponse | null>(null);
+  const [attachedFiles, setAttachedFiles] = useState<FileUploadResponse[]>([]);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
   const [runProcessClock, setRunProcessClock] = useState(Date.now());
@@ -1671,12 +1941,28 @@ export function ChatInterface() {
   const resourceAutoLoadedUserRef = useRef<string | null>(null);
   const workspaceAutoLoadedUserRef = useRef<string | null>(null);
   const sessionIdRef = useRef('');
+  const attachedFilesRef = useRef<FileUploadResponse[]>([]);
+  const sentMessagePreviewUrlsRef = useRef<Set<string>>(new Set());
   const { sendMessage: sendStreamMessage, disconnect } = useChatStream();
 
   const isLoading = loadingSessionIds.includes(sessionId);
   const messages = messagesBySession[sessionId] || [];
   const selectedExistingSkill = existingSkills.find((skill) => skill.id === selectedExistingSkillId) || existingSkills[0] || null;
   const selectedResource = resourceItems.find((item) => item.uri === selectedResourceUri) || resourceItems[0] || null;
+
+  useEffect(() => {
+    attachedFilesRef.current = attachedFiles;
+  }, [attachedFiles]);
+
+  useEffect(() => {
+    return () => {
+      attachedFilesRef.current.forEach(revokeLocalAttachmentPreview);
+      sentMessagePreviewUrlsRef.current.forEach((previewUrl) => {
+        URL.revokeObjectURL(previewUrl);
+      });
+      sentMessagePreviewUrlsRef.current.clear();
+    };
+  }, []);
 
   const loadResourceDirectory = useCallback(async (
     targetPath: string,
@@ -2569,12 +2855,6 @@ export function ChatInterface() {
   }, []);
 
   const openOptimizeResultInWorkbench = useCallback((result: OptimizeResult, sourceId?: string) => {
-    const resume = result.optimizedResume || result.resume;
-    if (resume) {
-      openResumeInWorkbench(resume, sourceId, result);
-      return;
-    }
-
     const tabId = `optimize-${sourceId || createClientId()}`;
 
     setWorkbenchTabs((currentTabs) => {
@@ -2600,7 +2880,42 @@ export function ChatInterface() {
     });
     setActiveWorkbenchTabId(tabId);
     setIsWorkbenchOpen(true);
-  }, [openResumeInWorkbench]);
+  }, []);
+
+  const openMarkdownInWorkbench = useCallback((markdown: MarkdownArtifact, sourceId?: string) => {
+    const tabId = `markdown-${sourceId || createClientId()}`;
+
+    setWorkbenchTabs((currentTabs) => {
+      const existingTab = currentTabs.find((tab) => tab.id === tabId);
+      if (existingTab) {
+        return currentTabs.map((tab) =>
+          tab.id === tabId
+            ? { ...tab, type: 'markdown', markdown, title: getMarkdownTabTitle(markdown) }
+            : tab,
+        );
+      }
+
+      return [
+        ...currentTabs,
+        {
+          id: tabId,
+          type: 'markdown',
+          title: getMarkdownTabTitle(markdown),
+          markdown,
+          createdAt: Date.now(),
+        },
+      ];
+    });
+    setActiveWorkbenchTabId(tabId);
+    setIsWorkbenchOpen(true);
+  }, []);
+
+  const handleOpenInterviewerDemo = useCallback(() => {
+    setIsKnowledgeBaseOpen(false);
+    setIsSkillsPanelOpen(false);
+    setActiveWorkbenchMode('workbench');
+    openMarkdownInWorkbench(INTERVIEWER_DEMO_MARKDOWN, 'interviewer-demo');
+  }, [openMarkdownInWorkbench]);
 
   const updateResumeWorkbenchTab = useCallback((tabId: string, resume: ResumeVO) => {
     setWorkbenchTabs((currentTabs) =>
@@ -2616,7 +2931,8 @@ export function ChatInterface() {
     if (!artifacts) return;
     if (artifacts.resume) openResumeInWorkbench(artifacts.resume, sourceId, artifacts.optimizeResult);
     else if (artifacts.optimizeResult) openOptimizeResultInWorkbench(artifacts.optimizeResult, sourceId);
-  }, [openOptimizeResultInWorkbench, openResumeInWorkbench]);
+    else if (artifacts.markdown) openMarkdownInWorkbench(artifacts.markdown, sourceId);
+  }, [openMarkdownInWorkbench, openOptimizeResultInWorkbench, openResumeInWorkbench]);
 
   const handleCloseWorkbenchTab = useCallback((tabId: string, event?: React.MouseEvent) => {
     event?.stopPropagation();
@@ -2650,7 +2966,8 @@ export function ChatInterface() {
       options?.displayContent || baseContent,
       normalizedQuotedUris,
     );
-    if (!content || isLoading) return;
+    const hasSendableAttachment = attachedFiles.length > 0;
+    if ((!content && !hasSendableAttachment) || isLoading) return;
     const targetSessionId = sessionId;
     if (!targetSessionId) return;
 
@@ -2660,19 +2977,36 @@ export function ChatInterface() {
       return;
     }
 
-    const currentFileId = attachedFile?.fileId;
+    const currentDocument = attachedFiles.find((file) => !isImageAttachment(file)) || null;
+    const currentImageFiles = attachedFiles.filter(isImageAttachment);
+    const currentFileId = currentDocument?.fileId;
+    const currentImageFileIds = currentImageFiles.map((file) => file.fileId);
+    const currentAttachmentIds = currentImageFileIds;
 
     const userMessage: ChatMessage = options?.displayMessage || {
       id: createClientId(),
       role: 'user',
       content: displayContent,
       timestamp: new Date(),
+      attachments: attachedFiles.map((file) => ({
+        fileId: file.fileId,
+        fileName: file.fileName,
+        fileType: file.fileType,
+        fileKind: file.fileKind,
+        mimeType: file.mimeType,
+        fileSize: file.fileSize,
+        previewUrl: file.previewUrl,
+        available: true,
+      })),
     };
 
+    localAttachmentPreviewUrls(userMessage.attachments).forEach((previewUrl) => {
+      sentMessagePreviewUrlsRef.current.add(previewUrl);
+    });
     setSessionMessages(targetSessionId, (prev) => [...prev, userMessage]);
     if (!options?.forcePost) {
       setInput('');
-      setAttachedFile(null);
+      setAttachedFiles([]);
       setQuotedResourceUris([]);
     }
     setSessionLoading(targetSessionId, true);
@@ -2726,6 +3060,7 @@ export function ChatInterface() {
                     mindmap: mindmap || undefined,
                     resumeData: artifacts?.resume,
                     optimizeResult: artifacts?.optimizeResult,
+                    markdownArtifact: artifacts?.markdown,
                   }
                 : message,
           ),
@@ -2770,7 +3105,7 @@ export function ChatInterface() {
         setSessionMessages(targetSessionId, (prev) =>
           prev.map((item) =>
             item.id === aiMessageId
-              ? { ...item, content: message, isStreaming: false }
+              ? { ...item, content: message, isStreaming: false, thinking: { status: 'failed' } }
               : item,
           ),
         );
@@ -2790,6 +3125,8 @@ export function ChatInterface() {
         language: 'zh-CN',
         outputStyle: 'concise',
         fileId: currentFileId,
+        imageFileIds: currentImageFileIds,
+        attachmentIds: currentAttachmentIds,
       })
         .then((response) => {
           if (isVisibleSession(targetSessionId)) {
@@ -2822,6 +3159,29 @@ export function ChatInterface() {
         if (!isVisibleSession(targetSessionId)) return;
         resetRunProcess(payload.runId);
         markMainAgentConnected(payload.runId);
+      },
+
+      onThinkingStarted: (_payload: ThinkingStartedPayload) => {
+        if (!isVisibleSession(targetSessionId)) return;
+        setSessionMessages(targetSessionId, (prev) =>
+          prev.map((message) =>
+            message.id === aiMessageId
+              ? { ...message, thinking: { status: 'running' } }
+              : message,
+          ),
+        );
+      },
+
+      onThinkingDone: (payload: ThinkingDonePayload) => {
+        if (!isVisibleSession(targetSessionId)) return;
+        const status = payload.status === 'failed' ? 'failed' : 'success';
+        setSessionMessages(targetSessionId, (prev) =>
+          prev.map((message) =>
+            message.id === aiMessageId
+              ? { ...message, thinking: { status } }
+              : message,
+          ),
+        );
       },
 
       onMessageDelta: (_delta, fullText) => {
@@ -2894,9 +3254,9 @@ export function ChatInterface() {
       onConnectionError: (error) => {
         handleRequestError(`连接中断：${error.message}`);
       },
-    }, currentFileId, currentUser.username, currentUser.username, 'zh-CN', 'concise');
+    }, currentFileId, currentUser.username, currentUser.username, 'zh-CN', 'concise', currentImageFileIds, currentAttachmentIds);
   }, [
-    attachedFile,
+    attachedFiles,
     currentUser,
     isVisibleSession,
     isLoading,
@@ -2974,28 +3334,64 @@ export function ChatInterface() {
   };
 
   const handleFileUpload = useCallback(async (file: File) => {
-    const allowedTypes = ['pdf', 'doc', 'docx', 'txt', 'html', 'htm'];
-    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    const allowedTypes = ['pdf', 'doc', 'docx', 'txt', 'html', 'htm', 'png', 'jpg', 'jpeg', 'webp', 'gif'];
+    const imageTypes = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+    const uploadFile = ensureImageFileName(file);
+    const ext = uploadFile.name.split('.').pop()?.toLowerCase() || imageExtensionFromMimeType(uploadFile.type);
+    const isImage = imageTypes.includes(ext) || uploadFile.type.startsWith('image/');
 
-    if (!allowedTypes.includes(ext)) {
-      alert(`不支持的文件类型：.${ext}\n支持的类型：PDF、Word、TXT、HTML`);
+    if (!allowedTypes.includes(ext) && !isImage) {
+      alert(`不支持的文件类型：.${ext}\n支持的类型：PDF、Word、TXT、HTML、PNG、JPEG、WEBP、GIF`);
       return;
     }
 
-    if (file.size > 15 * 1024 * 1024) {
+    if (isImage && uploadFile.size > 10 * 1024 * 1024) {
+      alert('图片大小超过限制（最大 10MB）');
+      return;
+    }
+
+    if (!isImage && uploadFile.size > 15 * 1024 * 1024) {
       alert('文件大小超过限制（最大 15MB）');
       return;
     }
 
     setIsUploadingFile(true);
+    const localPreviewUrl = isImage ? URL.createObjectURL(uploadFile) : undefined;
     try {
-      const response = await fileService.upload(file);
+      const response = await fileService.upload(uploadFile);
       if (response.success) {
-        setAttachedFile(response);
+        if (localPreviewUrl && response.previewUrl && response.previewUrl !== localPreviewUrl) {
+          URL.revokeObjectURL(localPreviewUrl);
+        }
+        const responseWithPreview = {
+          ...response,
+          previewUrl: response.previewUrl || localPreviewUrl,
+        };
+        setAttachedFiles((currentFiles) => {
+          if (isImageAttachment(responseWithPreview)) {
+            const currentImages = currentFiles.filter(isImageAttachment);
+            const totalImageBytes = currentImages.reduce((sum, item) => sum + item.fileSize, 0) + responseWithPreview.fileSize;
+            if (currentImages.length >= CHAT_IMAGE_LIMIT) {
+              alert(`最多只能附加 ${CHAT_IMAGE_LIMIT} 张图片`);
+              if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+              return currentFiles;
+            }
+            if (totalImageBytes > CHAT_IMAGE_TOTAL_LIMIT) {
+              alert('图片总大小超过限制（最大 25MB）');
+              if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+              return currentFiles;
+            }
+            return [...currentFiles, responseWithPreview];
+          }
+          if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
+          return [...currentFiles.filter(isImageAttachment), responseWithPreview];
+        });
       } else {
+        if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
         alert(response.errorMessage || '文件上传失败');
       }
     } catch (error) {
+      if (localPreviewUrl) URL.revokeObjectURL(localPreviewUrl);
       const message = error instanceof Error ? error.message : '文件上传失败';
       alert(message);
     } finally {
@@ -3003,10 +3399,40 @@ export function ChatInterface() {
     }
   }, []);
 
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const clipboardFiles = Array.from(event.clipboardData?.files || []);
+    const clipboardItems = Array.from(event.clipboardData?.items || []);
+    const fileImages = clipboardFiles.filter((file) => file.type.startsWith('image/'));
+    const itemImages = clipboardItems
+        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => Boolean(file));
+    const imageFiles = fileImages.length > 0 ? fileImages : itemImages;
+
+    const uniqueImages = imageFiles.filter((file, index, files) =>
+      files.findIndex((candidate) =>
+        candidate.size === file.size
+        && candidate.type === file.type
+        && (candidate.name === file.name || !candidate.name || !file.name)
+      ) === index,
+    );
+
+    if (uniqueImages.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    uniqueImages.forEach((file, index) => {
+      void handleFileUpload(ensureImageFileName(file, index));
+    });
+  }, [handleFileUpload]);
+
   const handleFileInputChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file) {
-      handleFileUpload(file);
+    const files = Array.from(event.target.files || []);
+    if (files.length > 0) {
+      files.forEach((file) => {
+        void handleFileUpload(file);
+      });
     }
     event.target.value = '';
   }, [handleFileUpload]);
@@ -3028,14 +3454,27 @@ export function ChatInterface() {
     event.stopPropagation();
     setIsDraggingFile(false);
 
-    const file = event.dataTransfer.files[0];
-    if (file) {
-      handleFileUpload(file);
+    const files = Array.from(event.dataTransfer.files || []);
+    if (files.length > 0) {
+      files.forEach((file) => {
+        void handleFileUpload(file);
+      });
     }
   }, [handleFileUpload]);
 
-  const handleRemoveFile = useCallback(() => {
-    setAttachedFile(null);
+  const handleRemoveFile = useCallback((fileId?: string) => {
+    if (!fileId) {
+      setAttachedFiles((currentFiles) => {
+        currentFiles.forEach(revokeLocalAttachmentPreview);
+        return [];
+      });
+      return;
+    }
+    setAttachedFiles((currentFiles) => {
+      const removedFiles = currentFiles.filter((file) => file.fileId === fileId);
+      removedFiles.forEach(revokeLocalAttachmentPreview);
+      return currentFiles.filter((file) => file.fileId !== fileId);
+    });
   }, []);
 
   const handleSkillUpload = useCallback(async (file: File) => {
@@ -3415,8 +3854,57 @@ export function ChatInterface() {
     getSessionTitle(session).toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
-  const isSendDisabled = (!input.trim() && quotedResourceUris.length === 0) || isLoading || !authChecked;
+  const isSendDisabled = (!input.trim() && quotedResourceUris.length === 0 && attachedFiles.length === 0) || isLoading || !authChecked;
   const isComposerInputDisabled = !authChecked || !currentUser;
+
+  const renderAttachedFiles = () => {
+    if (attachedFiles.length === 0) return null;
+    const imageFiles = attachedFiles.filter(isImageAttachment);
+    const documentFiles = attachedFiles.filter((file) => !isImageAttachment(file));
+
+    return (
+      <div className="attachment-preview-stack">
+        {imageFiles.length > 0 && (
+          <div className="image-attachment-grid">
+            {imageFiles.map((file) => (
+              <div key={file.fileId} className="image-attachment-thumb" title={file.fileName}>
+                {file.previewUrl ? (
+                  <img src={file.previewUrl} alt={file.fileName} />
+                ) : (
+                  <div className="image-attachment-placeholder">
+                    <FileText size={15} />
+                  </div>
+                )}
+                <span>{file.fileName}</span>
+                <button
+                  type="button"
+                  className="file-remove-btn"
+                  onClick={() => handleRemoveFile(file.fileId)}
+                  aria-label={`移除 ${file.fileName}`}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {documentFiles.map((file) => (
+          <div key={file.fileId} className="file-indicator">
+            <FileText size={14} />
+            <span className="file-name">{file.fileName}</span>
+            <button
+              type="button"
+              className="file-remove-btn"
+              onClick={() => handleRemoveFile(file.fileId)}
+              aria-label="移除附件"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+    );
+  };
   const currentTaskProgress = getTaskProgress(taskPlan, taskProgress);
   const completedTasks = currentTaskProgress.completed + currentTaskProgress.skipped;
   const hasTasks = taskPlan.length > 0;
@@ -3799,6 +4287,39 @@ export function ChatInterface() {
   const renderMessageContent = (message: ChatMessage) => {
     const inlineRunSteps = renderInlineRunSteps(message.runSteps);
     const assistantActions = renderAssistantActions(message);
+    const renderMessageAttachments = () => {
+      if (!message.attachments?.length) return null;
+      const images = message.attachments.filter(isImageAttachment);
+      const documents = message.attachments.filter((attachment) => !isImageAttachment(attachment));
+
+      return (
+        <div className="message-attachment-stack">
+          {images.length > 0 && (
+            <div className="message-image-grid">
+              {images.map((attachment, index) => (
+                <div key={attachment.fileId || `${getAttachmentName(attachment)}-${index}`} className="message-image-item">
+                  {attachment.previewUrl ? (
+                    <img src={attachment.previewUrl} alt={getAttachmentName(attachment)} />
+                  ) : (
+                    <div className="message-image-placeholder">
+                      <FileText size={16} />
+                      <span>{attachment.available === false ? '已过期' : '图片'}</span>
+                    </div>
+                  )}
+                  <small>{getAttachmentName(attachment)}</small>
+                </div>
+              ))}
+            </div>
+          )}
+          {documents.map((attachment, index) => (
+            <div key={attachment.fileId || `${getAttachmentName(attachment)}-${index}`} className="message-file-chip">
+              <FileText size={14} />
+              <span>{getAttachmentName(attachment)}</span>
+            </div>
+          ))}
+        </div>
+      );
+    };
 
     if (message.questionTrace) {
       return (
@@ -3869,7 +4390,18 @@ export function ChatInterface() {
 
     return (
       <>
+        {message.thinking && message.thinking.status !== 'failed' && (
+          <div className={`message-thinking status-${message.thinking.status}`}>
+            {message.thinking.status === 'running' ? (
+              <LoaderCircle size={13} className="spin" />
+            ) : (
+              <Check size={13} />
+            )}
+            <span>{message.thinking.status === 'running' ? 'Thinking...' : '已完成思考'}</span>
+          </div>
+        )}
         {assistantActions}
+        {renderMessageAttachments()}
         {message.content && <p className="message-content-text">{message.content}</p>}
         {inlineRunSteps}
       </>
@@ -3878,13 +4410,14 @@ export function ChatInterface() {
 
   const renderWorkbenchTabIcon = (tab: WorkbenchTab) => {
     if (tab.type === 'mindmap') return <GitBranch size={15} />;
+    if (tab.type === 'markdown') return <FileText size={15} />;
     if (tab.type === 'resume') return <FileText size={15} />;
     return <Sparkles size={15} />;
   };
 
   const renderMessageArtifacts = (message: ChatMessage) => {
     const artifacts = getMessageArtifacts(message);
-    if (!artifacts?.resume && !artifacts?.optimizeResult) return null;
+    if (!artifacts?.resume && !artifacts?.optimizeResult && !artifacts?.markdown) return null;
 
     return (
       <div className="message-artifact-actions">
@@ -3904,6 +4437,15 @@ export function ChatInterface() {
           >
             <Sparkles size={14} />
             查看优化分析
+          </button>
+        )}
+        {!artifacts.resume && !artifacts.optimizeResult && artifacts.markdown && (
+          <button
+            className="artifact-tag"
+            onClick={() => openMarkdownInWorkbench(artifacts.markdown as MarkdownArtifact, message.id)}
+          >
+            <FileText size={14} />
+            打开文档
           </button>
         )}
       </div>
@@ -3932,6 +4474,18 @@ export function ChatInterface() {
             onOptimize={(request) => handleResumeOptimizeRequest(tab.id, tab.resume, request)}
           />
         </Suspense>
+      );
+    }
+
+    if (tab.type === 'markdown') {
+      return (
+        <div className="workbench-content-card workbench-markdown-card">
+          <div className="workbench-markdown-head">
+            <FileText size={18} />
+            <h2>{getMarkdownTabTitle(tab.markdown)}</h2>
+          </div>
+          <pre className="workbench-markdown-body">{tab.markdown.markdown}</pre>
+        </div>
       );
     }
 
@@ -4192,6 +4746,14 @@ export function ChatInterface() {
               <Sparkles size={18} />
               <span>Skills</span>
             </button>
+            <button
+              type="button"
+              className={`nav-item skills-entry-btn demo-entry-btn ${activeWorkbenchMode === 'workbench' && activeWorkbenchTabId === 'markdown-interviewer-demo' ? 'active' : ''}`}
+              onClick={handleOpenInterviewerDemo}
+            >
+              <Bot size={18} />
+              <span>面试官 Demo</span>
+            </button>
           </nav>
 
           <div className="chats-section">
@@ -4259,7 +4821,8 @@ export function ChatInterface() {
           type="file"
           ref={fileInputRef}
           onChange={handleFileInputChange}
-          accept=".pdf,.doc,.docx,.txt,.html,.htm"
+          accept={CHAT_ATTACHMENT_ACCEPT}
+          multiple
           hidden
         />
         <input
@@ -4326,20 +4889,7 @@ export function ChatInterface() {
                     <span>释放文件以上传</span>
                   </div>
                 )}
-                {attachedFile && (
-                  <div className="file-indicator">
-                    <FileText size={14} />
-                    <span className="file-name">{attachedFile.fileName}</span>
-                    <button
-                      type="button"
-                      className="file-remove-btn"
-                      onClick={handleRemoveFile}
-                      aria-label="移除附件"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
+                {renderAttachedFiles()}
                 {quotedResourceUris.length > 0 && (
                   <div className="quoted-resource-list">
                     {quotedResourceUris.map((uri) => (
@@ -4362,6 +4912,7 @@ export function ChatInterface() {
                     value={input}
                     onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
+                    onPaste={handlePaste}
                     placeholder={currentUser ? 'Type a prompt or press / for commands' : '请先登录账号'}
                     className="glass-textarea"
                     rows={1}
@@ -4386,7 +4937,7 @@ export function ChatInterface() {
                       <Sparkles size={12} /> JARVIS
                     </span>
                     <button
-                      className={`send-btn ${input.trim() ? 'active' : ''}`}
+                      className={`send-btn ${input.trim() || attachedFiles.length > 0 ? 'active' : ''}`}
                       onClick={handleSend}
                       disabled={isSendDisabled}
                       title="发送"
@@ -4592,20 +5143,7 @@ export function ChatInterface() {
                   <span>释放文件以上传</span>
                 </div>
               )}
-              {attachedFile && (
-                <div className="file-indicator">
-                  <FileText size={14} />
-                  <span className="file-name">{attachedFile.fileName}</span>
-                  <button
-                    type="button"
-                    className="file-remove-btn"
-                    onClick={handleRemoveFile}
-                    aria-label="移除附件"
-                  >
-                    <X size={14} />
-                  </button>
-                </div>
-              )}
+              {renderAttachedFiles()}
               {quotedResourceUris.length > 0 && (
                 <div className="quoted-resource-list">
                   {quotedResourceUris.map((uri) => (
@@ -4628,6 +5166,7 @@ export function ChatInterface() {
                   value={input}
                   onChange={handleInputChange}
                   onKeyDown={handleKeyDown}
+                  onPaste={handlePaste}
                   placeholder={currentUser ? '输入你的问题...' : '请先登录账号'}
                   className="glass-textarea"
                   rows={1}
@@ -4661,7 +5200,7 @@ export function ChatInterface() {
                     <Sparkles size={12} /> JARVIS
                   </span>
                   <button
-                    className={`send-btn ${input.trim() ? 'active' : ''}`}
+                    className={`send-btn ${input.trim() || attachedFiles.length > 0 ? 'active' : ''}`}
                     onClick={handleSend}
                     disabled={isSendDisabled}
                     title="发送"

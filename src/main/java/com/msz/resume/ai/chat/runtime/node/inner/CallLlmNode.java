@@ -3,16 +3,20 @@ package com.msz.resume.ai.chat.runtime.node.inner;
 import com.msz.resume.ai.agent.SubAgentType;
 import com.msz.resume.ai.agent.SubAgentTypeRegistry;
 import com.msz.resume.ai.chat.observability.cache.CacheTracker;
+import com.msz.resume.ai.chat.compression.LlmContextProjector;
 import com.msz.resume.ai.chat.compression.MessagePreprocessingPipeline;
 import com.msz.resume.ai.chat.compression.PostCompactRestorer;
 import com.msz.resume.ai.chat.compression.TokenEstimator;
 import com.msz.resume.ai.chat.compression.model.CacheUsage;
+import com.msz.resume.ai.chat.compression.model.LlmContextCheckpoint;
 import com.msz.resume.ai.chat.compression.model.PipelineResult;
+import com.msz.resume.ai.chat.llm.config.LLMConfig;
 import com.msz.resume.ai.chat.runtime.trace.ChatRunTraceContext;
 import com.msz.resume.ai.chat.runtime.trace.ChatStreamContext;
 import com.msz.resume.ai.chat.runtime.trace.AssistantCheckpointService;
 import com.msz.resume.ai.chat.runtime.trace.TraceAgentDescriptor;
 import com.msz.resume.ai.chat.runtime.trace.TraceService;
+import com.msz.resume.ai.chat.runtime.trace.langfuse.LangfuseTracingService;
 import com.msz.resume.ai.integrations.openviking.core.context.OpenVikingIdentitySupport;
 import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
 import com.msz.resume.ai.integrations.openviking.core.recall.OpenVikingRecallEngine;
@@ -89,6 +93,8 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
     /** 消息预处理管线，用于上下文压缩 */
     private final MessagePreprocessingPipeline pipeline;
 
+    private final LlmContextProjector contextProjector;
+
     /** Token 估算器，用于锚点法估算 */
     private final TokenEstimator tokenEstimator;
 
@@ -103,6 +109,8 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
     private final OpenVikingRecallEngine openVikingRecallEngine;
     private final TraceService traceService;
     private final AssistantCheckpointService assistantCheckpointService;
+    private final LangfuseTracingService langfuseTracingService;
+    private final boolean gptChatThinkingEventsEnabled;
 
 
     /** 注入 LLM 调用、提示词构建、召回和 trace 记录所需依赖。 */
@@ -112,19 +120,23 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                        SystemPromptBuilder promptBuilder,
                        CacheTracker cacheTracker,
                        MessagePreprocessingPipeline pipeline,
+                       LlmContextProjector contextProjector,
                        TokenEstimator tokenEstimator,
                        SubAgentTypeRegistry subAgentTypeRegistry,
                        OpenVikingSessionGateway openVikingSessionGateway,
                        OpenVikingSessionProperties openVikingSessionProperties,
                        OpenVikingRecallEngine openVikingRecallEngine,
                        TraceService traceService,
-                       AssistantCheckpointService assistantCheckpointService) {
+                       AssistantCheckpointService assistantCheckpointService,
+                       LangfuseTracingService langfuseTracingService,
+                       LLMConfig llmConfig) {
         this.chatModel = chatModel;
         this.streamingChatModel = streamingChatModel;
         this.toolRegistry = toolRegistry;
         this.promptBuilder = promptBuilder;
         this.cacheTracker = cacheTracker;
         this.pipeline = pipeline;
+        this.contextProjector = contextProjector;
         this.tokenEstimator = tokenEstimator;
         this.subAgentTypeRegistry = subAgentTypeRegistry;
         this.openVikingSessionGateway = openVikingSessionGateway;
@@ -132,6 +144,8 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
         this.openVikingRecallEngine = openVikingRecallEngine;
         this.traceService = traceService;
         this.assistantCheckpointService = assistantCheckpointService;
+        this.langfuseTracingService = langfuseTracingService;
+        this.gptChatThinkingEventsEnabled = isGptChatThinkingEnabled(llmConfig);
     }
 
     /**
@@ -154,20 +168,42 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
 
                 // 1. 消息预处理管线：检查上下文利用率，按需执行压缩
                 List<ChatMessage> stateMessages = currentState.getMessages();
+                LlmContextCheckpoint currentCheckpoint = currentState.getLlmContextCheckpoint();
+                LlmContextProjector.Projection projection = contextProjector.projectWithMetadata(
+                        stateMessages,
+                        currentCheckpoint,
+                        currentState.getSessionId()
+                );
+                List<ChatMessage> modelContextMessages = projection.messages();
                 // 设置 taskPlan ThreadLocal，供 PostCompactRestorer 在 L5 压缩后恢复
                 PostCompactRestorer.setTaskPlan(currentState.getTaskPlan());
                 PipelineResult pipelineResult;
                 try {
-                    pipelineResult = pipeline.process(stateMessages, currentState.getSessionId());
+                    pipelineResult = pipeline.process(modelContextMessages, currentState.getSessionId());
                 } finally {
                     PostCompactRestorer.clearTaskPlan();
                 }
+                LlmContextCheckpoint nextCheckpoint = remapCheckpoint(
+                        pipelineResult.checkpoint(),
+                        projection,
+                        stateMessages.size()
+                );
 
                 if (pipelineResult.wasCompressed()) {
                     log.info("[CallLlmNode] 执行压缩: {}, tokens: {} → {}",
                             pipelineResult.executedLevels(),
                             pipelineResult.originalTokens(),
                             pipelineResult.finalTokens());
+                }
+                ChatRunTraceContext traceContext = ChatStreamContext.getTraceContext(
+                        currentState.getSessionId(), currentState.getTraceRunId());
+                if (langfuseTracingService != null) {
+                    langfuseTracingService.recordCompression(
+                            traceContext,
+                            pipelineResult,
+                            stateMessages.size(),
+                            modelContextMessages.size()
+                    );
                 }
                 List<ChatMessage> processedMessages = pipelineResult.messages();
 
@@ -200,8 +236,6 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                         currentState.getTraceAgentLabel(),
                         currentState.isSubAgent() ? currentState.getSubAgentType().name() : null
                 );
-                ChatRunTraceContext traceContext = ChatStreamContext.getTraceContext(
-                        currentState.getSessionId(), currentState.getTraceRunId());
                 OpenVikingRecallResult recallResult = null;
                 if (!currentState.isSubAgent()) {
                     recallResult = openVikingRecallEngine.prepare(currentState, processedMessages);
@@ -270,7 +304,19 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                         .build();
 
                 // 5. 调用大模型，拿到回复
-                ChatResponse response = chat(request, currentState.getSessionId());
+                long llmStartMs = System.currentTimeMillis();
+                String currentSessionId = currentState.getSessionId();
+                AtomicBoolean thinkingDoneSent = new AtomicBoolean(false);
+                sendThinkingStarted(currentSessionId);
+                ChatResponse response;
+                try {
+                    response = chat(request, currentSessionId, thinkingDoneSent);
+                    sendThinkingDoneOnce(currentSessionId, "success", thinkingDoneSent);
+                } catch (RuntimeException e) {
+                    sendThinkingDoneOnce(currentSessionId, "failed", thinkingDoneSent);
+                    throw e;
+                }
+                long llmDurationMs = System.currentTimeMillis() - llmStartMs;
                 AiMessage aiMessage = response.aiMessage();
                 if (traceContext != null && aiMessage.hasToolExecutionRequests()) {
                     assistantCheckpointService.toolPlan(
@@ -312,6 +358,19 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
 
                 // 8. 追踪缓存使用情况
                 CacheUsage cacheUsage = cacheTracker.track(response);
+                if (langfuseTracingService != null) {
+                    langfuseTracingService.recordGeneration(
+                            traceContext,
+                            request,
+                            response,
+                            pipelineResult,
+                            cacheUsage,
+                            isSubAgent,
+                            agentDescriptor.agentLabel(),
+                            llmStartMs,
+                            llmDurationMs
+                    );
+                }
                 log.info("[CallLlmNode] 缓存: {}%, 热度: {}",
                         String.format("%.1f", cacheUsage.hitRate() * 100),
                         cacheUsage.warmth().getLabel());
@@ -335,6 +394,9 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                 result.put(QueryLoopState.TRACE_AGENT_ID, currentState.getTraceAgentId());
                 result.put(QueryLoopState.TRACE_AGENT_LABEL, currentState.getTraceAgentLabel());
                 result.put(QueryLoopState.TRACE_AGENT_SCOPE, currentState.getTraceAgentScope());
+                if (nextCheckpoint != null && nextCheckpoint.hasSummary()) {
+                    result.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, nextCheckpoint);
+                }
                 result.put(QueryLoopState.SURFACED_OPENVIKING_URIS,
                         openVikingRecallEngine.mergeSurfacedUris(currentState, recallResult));
 
@@ -414,7 +476,7 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
     }
 
     /** 在流式和非流式模型之间做统一适配，并尽量把 token delta 推给前端。 */
-    private ChatResponse chat(ChatRequest request, String sessionId) {
+    private ChatResponse chat(ChatRequest request, String sessionId, AtomicBoolean thinkingDoneSent) {
         if (!ChatStreamContext.isActive(sessionId) || streamingChatModel.isEmpty()) {
             return chatModel.chat(request);
         }
@@ -431,6 +493,7 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                     return;
                 }
                 try {
+                    sendThinkingDoneOnce(sessionId, "success", thinkingDoneSent);
                     ChatStreamContext.sendDelta(sessionId, partialResponse);
                 } catch (Exception e) {
                     if (deltaSendDisabled.compareAndSet(false, true)) {
@@ -473,6 +536,46 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
         return response;
     }
 
+    private void sendThinkingStarted(String sessionId) {
+        if (!gptChatThinkingEventsEnabled) {
+            return;
+        }
+        try {
+            ChatStreamContext.sendThinkingStarted(sessionId);
+        } catch (Exception e) {
+            log.debug("[CallLlmNode] thinking_started 发送失败: sessionId={}, error={}", sessionId, e.getMessage());
+        }
+    }
+
+    private void sendThinkingDone(String sessionId, String status) {
+        if (!gptChatThinkingEventsEnabled) {
+            return;
+        }
+        try {
+            ChatStreamContext.sendThinkingDone(sessionId, status);
+        } catch (Exception e) {
+            log.debug("[CallLlmNode] thinking_done 发送失败: sessionId={}, status={}, error={}",
+                    sessionId, status, e.getMessage());
+        }
+    }
+
+    private void sendThinkingDoneOnce(String sessionId, String status, AtomicBoolean thinkingDoneSent) {
+        if (thinkingDoneSent == null || thinkingDoneSent.compareAndSet(false, true)) {
+            sendThinkingDone(sessionId, status);
+        }
+    }
+
+    private boolean isGptChatThinkingEnabled(LLMConfig llmConfig) {
+        if (llmConfig == null || llmConfig.getGpt() == null) {
+            return false;
+        }
+        LLMConfig.GptConfig gptConfig = llmConfig.getGpt();
+        return "gpt".equalsIgnoreCase(llmConfig.getProvider())
+                && "chat".equalsIgnoreCase(gptConfig.getWireApi())
+                && gptConfig.getReasoningEffort() != null
+                && !gptConfig.getReasoningEffort().isBlank();
+    }
+
     /**
      * 检查是否应该加载 OpenViking Session Context。
      *
@@ -495,6 +598,46 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
         sb.append("以下是当前会话的摘要信息，供你理解上下文参考：\n\n");
         sb.append(sessionContext);
         return sb.toString();
+    }
+
+    private LlmContextCheckpoint remapCheckpoint(LlmContextCheckpoint pipelineCheckpoint,
+                                                 LlmContextProjector.Projection projection,
+                                                 int fullHistorySize) {
+        if (pipelineCheckpoint == null || !pipelineCheckpoint.hasSummary()) {
+            return null;
+        }
+
+        int projectedTailStart = projection != null && projection.checkpointApplied()
+                ? projection.fullHistoryTailStart()
+                : 0;
+        int summaryPrefixSize = projection != null && projection.checkpointApplied()
+                ? projection.summaryPrefixSize()
+                : 0;
+
+        int pipelineSplit = pipelineCheckpoint.tailStartIndex();
+        int fullTailStart;
+        if (pipelineSplit <= summaryPrefixSize) {
+            fullTailStart = projectedTailStart;
+        } else {
+            fullTailStart = projectedTailStart + (pipelineSplit - summaryPrefixSize);
+        }
+        fullTailStart = Math.max(0, Math.min(fullTailStart, fullHistorySize));
+
+        List<ChatMessage> summaryMessages = new ArrayList<>(pipelineCheckpoint.summaryMessages());
+        if (projection != null && projection.checkpointApplied()) {
+            int preservedPrefixStart = Math.max(0, pipelineSplit);
+            if (preservedPrefixStart < summaryPrefixSize) {
+                summaryMessages.addAll(projection.messages().subList(preservedPrefixStart, summaryPrefixSize));
+            }
+        }
+
+        return new LlmContextCheckpoint(
+                fullTailStart,
+                fullHistorySize,
+                summaryMessages,
+                pipelineCheckpoint.originalTokens(),
+                pipelineCheckpoint.compactedTokens()
+        );
     }
 
 }

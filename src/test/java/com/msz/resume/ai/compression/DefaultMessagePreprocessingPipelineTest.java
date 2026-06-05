@@ -117,6 +117,26 @@ class DefaultMessagePreprocessingPipelineTest {
     }
 
     @Test
+    @DisplayName("process() L5 成功时返回 LLM context checkpoint")
+    void process_whenL5Succeeds_shouldReturnCheckpoint() {
+        List<ChatMessage> messages = List.of(
+                UserMessage.from("A".repeat(1500)),
+                UserMessage.from("B".repeat(1500)),
+                UserMessage.from("C".repeat(1500))
+        );
+
+        PipelineResult result = pipeline.process(messages, "session1");
+
+        assertTrue(result.wasCompressed());
+        assertTrue(result.executedLevels().contains("L5"));
+        assertNotNull(result.checkpoint());
+        assertTrue(result.checkpoint().hasSummary());
+        assertEquals(messages.size() - 1, result.checkpoint().tailStartIndex());
+        assertEquals(messages.size(), result.checkpoint().sourceMessageCount());
+        assertEquals(1, result.checkpoint().summaryMessages().size());
+    }
+
+    @Test
     @DisplayName("process() L1 截断大工具结果")
     void process_whenLargeToolResult_shouldTruncate() {
         // 重置工具预算，设置更低的阈值
@@ -353,12 +373,16 @@ class DefaultMessagePreprocessingPipelineTest {
                 return AutocompactResult.skipped(messages, 0);
             }
 
-            List<ChatMessage> compacted = List.of(
+            int splitIndex = Math.max(0, messages.size() - 1);
+            List<ChatMessage> summaryPrefix = List.of(
                     UserMessage.from("[对话摘要]\n\n用户讨论了多个话题...")
             );
+            List<ChatMessage> compacted = new ArrayList<>(summaryPrefix);
+            compacted.addAll(messages.subList(splitIndex, messages.size()));
 
             return AutocompactResult.success(compacted,
-                    messages.size() * 10, compacted.size() * 10);
+                    messages.size() * 10, compacted.size() * 10,
+                    splitIndex, messages.size() - splitIndex, summaryPrefix);
         }
 
         @Override

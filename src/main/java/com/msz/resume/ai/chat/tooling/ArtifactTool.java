@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.msz.resume.ai.resume.dto.MatchAnalysis;
 import com.msz.resume.ai.resume.dto.OptimizeResult;
 import com.msz.resume.ai.resume.dto.ResumeVO;
+import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationBundle;
 import com.msz.resume.ai.tool.CoreTool;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
@@ -35,6 +36,7 @@ public class ArtifactTool {
             "mindmap",
             "resume",
             "optimize_result",
+            "resume_evaluation",
             "markdown"
     );
 
@@ -44,13 +46,15 @@ public class ArtifactTool {
             For resume generation or resume optimization requests, if you already have enough information, publish the artifact immediately instead of first sending a long prose draft.
             Return one structured artifact object directly instead of wrapping JSON inside a string.
             Supported artifact types include resume, optimize_result, mindmap, and markdown.
+            Resume evaluation can be published with type=resume_evaluation after evaluateResume returns a scoring bundle.
             Do not use this for PDF export. PDF export is handled directly by the frontend workbench.
             Do not use this for ordinary prose answers or user-facing plans.
             """)
     public String publishArtifact(
-            @P("Artifact type. Supported values: mindmap, resume, optimize_result, markdown.") String type,
+            @P("Artifact type. Supported values: mindmap, resume, optimize_result, resume_evaluation, markdown.") String type,
             @P(value = "Resume artifact payload. Use this when type=resume.", required = false) ResumeVO resume,
             @P(value = "Optimize result payload. Use this when type=optimize_result.", required = false) OptimizeResult optimizeResult,
+            @P(value = "Resume evaluation payload. Use this when type=resume_evaluation.", required = false) ResumeEvaluationBundle resumeEvaluation,
             @P(value = "Markdown content. Use this when type=mindmap or type=markdown.", required = false) String markdown
     ) {
         if (type == null || type.isBlank()) {
@@ -73,6 +77,12 @@ public class ArtifactTool {
                     yield null;
                 }
                 yield optimizeResult;
+            }
+            case "resume_evaluation" -> {
+                if (resumeEvaluation == null) {
+                    yield null;
+                }
+                yield resumeEvaluation;
             }
             case "mindmap" -> new MindmapArtifact(markdown);
             case "markdown" -> new MarkdownArtifact(markdown);
@@ -116,7 +126,13 @@ public class ArtifactTool {
                     || hasMatchAnalysisContent(artifact.getMatchAnalysis())
                     || hasContent(artifact.getSuggestions())
                     || hasContent(artifact.getHighlights())
+                    || artifact.getEvaluation() != null
                     || artifact.getOptimizedResume() != null);
+            case "resume_evaluation" -> payload instanceof ResumeEvaluationBundle artifact
+                    && (artifact.getQuality() != null
+                    || artifact.getOriginalResume() != null
+                    || artifact.getGeneratedResume() != null
+                    || artifact.getJdMatch() != null);
             case "markdown" -> payload instanceof MarkdownArtifact artifact
                     && artifact.getMarkdown() != null
                     && !artifact.getMarkdown().isBlank();

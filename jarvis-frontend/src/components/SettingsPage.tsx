@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { CSSProperties } from 'react';
-import { ArrowLeft, ImagePlus, LogIn, RotateCcw, Settings2, Upload, UserRound } from 'lucide-react';
+import { ArrowLeft, ImagePlus, Lightbulb, LogIn, RotateCcw, Settings2, Upload, UserRound } from 'lucide-react';
 import { LoginPage } from './LoginPage';
 import type { AuthUser } from '../types';
 
@@ -85,6 +85,7 @@ export function SettingsPage({
     { id: 'login', label: '账号', icon: <LogIn size={18} /> },
     { id: 'personalization', label: '个性化', icon: <ImagePlus size={18} /> },
     { id: 'profile', label: '用户画像', icon: <UserRound size={18} /> },
+    { id: 'candidate-demo', label: '候选人建议 Demo', icon: <Lightbulb size={18} /> },
   ];
 
   const handleWallpaperFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -142,6 +143,42 @@ export function SettingsPage({
             <span className="settings-placeholder-eyebrow">Reserved</span>
             <h2>用户画像</h2>
             <p>这里将用于沉淀求职目标、经历偏好、表达风格和长期记忆。</p>
+          </section>
+        );
+      case 'candidate-demo':
+        return (
+          <section className="candidate-demo-panel">
+            <div className="candidate-demo-header">
+              <span className="settings-placeholder-eyebrow">Candidate Advice</span>
+              <h2>候选人建议展示 Demo</h2>
+              <p>前端占位版，用于展示候选人在面试或简历优化后的建议摘要；后续可以接入真实后端数据。</p>
+            </div>
+
+            <div className="candidate-demo-grid">
+              <article className="candidate-demo-card primary">
+                <span>整体匹配度</span>
+                <strong>78%</strong>
+                <p>项目经验和 Java 技术栈匹配较好，需要补强消息队列和可观测性案例。</p>
+              </article>
+              <article className="candidate-demo-card">
+                <span>建议优先级</span>
+                <strong>3 项</strong>
+                <p>补充量化指标、压缩项目背景、突出线上问题定位闭环。</p>
+              </article>
+            </div>
+
+            <div className="candidate-demo-list" aria-label="候选人建议列表">
+              {[
+                '把高并发项目的 QPS、延迟、错误率等指标写到项目成果里。',
+                '准备一个缓存一致性或消息积压问题的完整排查故事。',
+                '面试时先讲业务约束，再讲技术方案，最后讲收益和复盘。',
+              ].map((item, index) => (
+                <div key={item} className="candidate-demo-suggestion">
+                  <span>{index + 1}</span>
+                  <p>{item}</p>
+                </div>
+              ))}
+            </div>
           </section>
         );
       case 'personalization':

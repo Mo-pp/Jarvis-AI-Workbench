@@ -91,6 +91,12 @@ public class LLMConfig {
 
         /** 最大输出 Token */
         private Integer maxTokens = 4096;
+
+        /** 是否记录原始请求体日志 */
+        private boolean logRequests = false;
+
+        /** 是否记录原始响应体日志 */
+        private boolean logResponses = false;
     }
 
     @Data
@@ -124,6 +130,12 @@ public class LLMConfig {
 
         /** 最大输出 Token */
         private Integer maxOutputTokens;
+
+        /** 是否记录原始请求体日志 */
+        private boolean logRequests = false;
+
+        /** 是否记录原始响应体日志 */
+        private boolean logResponses = false;
     }
 
     @Data
@@ -142,6 +154,12 @@ public class LLMConfig {
 
         /** 请求超时时间（秒） */
         private int timeout = 120;
+
+        /** 是否记录原始请求体日志 */
+        private boolean logRequests = false;
+
+        /** 是否记录原始响应体日志 */
+        private boolean logResponses = false;
     }
 
     /**
@@ -166,8 +184,8 @@ public class LLMConfig {
                 .timeout(Duration.ofSeconds(zhipu.getTimeout()))
                 .temperature(zhipu.getTemperature())
                 .maxTokens(zhipu.getMaxTokens())
-                .logRequests(true)
-                .logResponses(true)
+                .logRequests(zhipu.isLogRequests())
+                .logResponses(zhipu.isLogResponses())
                 .build();
     }
 
@@ -188,8 +206,8 @@ public class LLMConfig {
                 .timeout(Duration.ofSeconds(zhipu.getTimeout()))
                 .temperature(zhipu.getTemperature())
                 .maxTokens(zhipu.getMaxTokens())
-                .logRequests(true)
-                .logResponses(true)
+                .logRequests(zhipu.isLogRequests())
+                .logResponses(zhipu.isLogResponses())
                 .build();
     }
 
@@ -210,8 +228,8 @@ public class LLMConfig {
                     .apiKey(gpt.getApiKey())
                     .modelName(gpt.getModel())
                     .timeout(Duration.ofSeconds(gpt.getTimeout()))
-                    .logRequests(true)
-                    .logResponses(true);
+                    .logRequests(gpt.isLogRequests())
+                    .logResponses(gpt.isLogResponses());
 
             if (gpt.getMaxOutputTokens() != null) {
                 builder.maxTokens(gpt.getMaxOutputTokens());
@@ -230,8 +248,8 @@ public class LLMConfig {
                     .baseUrl(gpt.getBaseUrl())
                     .apiKey(gpt.getApiKey())
                     .modelName(gpt.getModel())
-                    .logRequests(true)
-                    .logResponses(true);
+                    .logRequests(gpt.isLogRequests())
+                    .logResponses(gpt.isLogResponses());
 
             if (gpt.getMaxOutputTokens() != null) {
                 builder.maxOutputTokens(gpt.getMaxOutputTokens());
@@ -261,11 +279,14 @@ public class LLMConfig {
                     .apiKey(gpt.getApiKey())
                     .modelName(gpt.getModel())
                     .timeout(Duration.ofSeconds(gpt.getTimeout()))
-                    .logRequests(true)
-                    .logResponses(true);
+                    .logRequests(gpt.isLogRequests())
+                    .logResponses(gpt.isLogResponses());
 
             if (gpt.getMaxOutputTokens() != null) {
                 builder.maxTokens(gpt.getMaxOutputTokens());
+            }
+            if (gpt.getReasoningEffort() != null && !gpt.getReasoningEffort().isBlank()) {
+                builder.reasoningEffort(gpt.getReasoningEffort());
             }
             return builder.build();
         }
@@ -275,8 +296,8 @@ public class LLMConfig {
                     .baseUrl(gpt.getBaseUrl())
                     .apiKey(gpt.getApiKey())
                     .modelName(gpt.getModel())
-                    .logRequests(true)
-                    .logResponses(true);
+                    .logRequests(gpt.isLogRequests())
+                    .logResponses(gpt.isLogResponses());
 
             if (gpt.getMaxOutputTokens() != null) {
                 builder.maxOutputTokens(gpt.getMaxOutputTokens());
@@ -312,8 +333,8 @@ public class LLMConfig {
                 .apiKey(qianfanCodingPlan.getApiKey())
                 .modelName(qianfanCodingPlan.getModel())
                 .timeout(Duration.ofSeconds(qianfanCodingPlan.getTimeout()))
-                .logRequests(true)
-                .logResponses(true)
+                .logRequests(qianfanCodingPlan.isLogRequests())
+                .logResponses(qianfanCodingPlan.isLogResponses())
                 .build();
     }
 
@@ -336,8 +357,8 @@ public class LLMConfig {
                 .apiKey(qianfanCodingPlan.getApiKey())
                 .modelName(qianfanCodingPlan.getModel())
                 .timeout(Duration.ofSeconds(qianfanCodingPlan.getTimeout()))
-                .logRequests(true)
-                .logResponses(true)
+                .logRequests(qianfanCodingPlan.isLogRequests())
+                .logResponses(qianfanCodingPlan.isLogResponses())
                 .build();
     }
 

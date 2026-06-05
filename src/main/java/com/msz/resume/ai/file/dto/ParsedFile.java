@@ -40,6 +40,16 @@ public class ParsedFile implements Serializable {
     private String fileType;
 
     /**
+     * 文件分类：document / image
+     */
+    private String fileKind;
+
+    /**
+     * MIME 类型，图片附件会用于构造多模态输入。
+     */
+    private String mimeType;
+
+    /**
      * 文件大小（字节）
      */
     private long fileSize;
@@ -48,6 +58,11 @@ public class ParsedFile implements Serializable {
      * 解析后的纯文本内容
      */
     private String content;
+
+    /**
+     * 图片文件的 base64 内容。只存在 Redis 短期缓存中，不写入消息历史。
+     */
+    private String base64Data;
 
     /**
      * 解析时间

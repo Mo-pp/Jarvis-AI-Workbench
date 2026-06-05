@@ -1,5 +1,7 @@
 package com.msz.resume.ai.resume.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationBundle;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -66,4 +68,21 @@ public class OptimizeResult implements Serializable {
      */
     @Builder.Default
     private List<String> highlights = List.of();
+
+    /**
+     * 新版简历评价与 JD 匹配度评分结果。
+     *
+     * <p>保留 matchScore/matchAnalysis 作为旧格式兼容字段，新链路优先读 evaluation。
+     */
+    private ResumeEvaluationBundle evaluation;
+
+    @JsonIgnore
+    public Integer getEffectiveMatchScore() {
+        if (evaluation != null
+                && evaluation.getJdMatch() != null
+                && evaluation.getJdMatch().getScore() != null) {
+            return evaluation.getJdMatch().getScore();
+        }
+        return matchScore;
+    }
 }

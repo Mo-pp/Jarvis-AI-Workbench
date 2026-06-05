@@ -84,4 +84,31 @@ public final class ChatStreamContext {
                 "delta", delta
         ));
     }
+
+    /** 通知前端 GPT hidden reasoning 阶段开始。 */
+    public static void sendThinkingStarted(String sessionId) throws IOException {
+        ChatStreamEventSink sink = SINKS.get(sessionId);
+        if (sink == null || sink.isClosed()) {
+            return;
+        }
+        sink.send("thinking_started", Map.of(
+                "mode", "hidden",
+                "provider", "gpt",
+                "summaryAvailable", false
+        ));
+    }
+
+    /** 通知前端 GPT hidden reasoning 阶段结束。 */
+    public static void sendThinkingDone(String sessionId, String status) throws IOException {
+        ChatStreamEventSink sink = SINKS.get(sessionId);
+        if (sink == null || sink.isClosed()) {
+            return;
+        }
+        sink.send("thinking_done", Map.of(
+                "mode", "hidden",
+                "provider", "gpt",
+                "status", status != null && !status.isBlank() ? status : "success",
+                "summaryAvailable", false
+        ));
+    }
 }

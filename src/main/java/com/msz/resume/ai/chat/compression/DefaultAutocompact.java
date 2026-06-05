@@ -112,9 +112,12 @@ public class DefaultAutocompact implements Autocompact {
             List<ChatMessage> restored = restorer.restore(sessionId, toPreserve);
 
             // 8. 合并结果
+            List<ChatMessage> summaryPrefix = new ArrayList<>();
+            summaryPrefix.add(summaryMessage);
+            summaryPrefix.addAll(restored);
+
             List<ChatMessage> result = new ArrayList<>();
-            result.add(summaryMessage);
-            result.addAll(restored);
+            result.addAll(summaryPrefix);
             result.addAll(toPreserve);
 
             int resultTokens = tokenEstimator.estimate(result);
@@ -125,7 +128,14 @@ public class DefaultAutocompact implements Autocompact {
             log.info("[Autocompact] 压缩完成: {} → {} tokens, 保留 {} 条消息, 恢复 {} 条附加消息",
                     totalTokens, resultTokens, toPreserve.size(), restored.size());
 
-            return AutocompactResult.success(result, totalTokens, resultTokens);
+            return AutocompactResult.success(
+                    result,
+                    totalTokens,
+                    resultTokens,
+                    split.splitIndex(),
+                    split.preservedCount(),
+                    summaryPrefix
+            );
 
         } catch (Exception e) {
             log.error("[Autocompact] 压缩失败: {}", e.getMessage(), e);

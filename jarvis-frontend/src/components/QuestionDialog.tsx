@@ -60,9 +60,12 @@ function isConfirmationType(type?: string): boolean {
 }
 
 function getQuestionTypeLabel(type?: string): string {
+  const normalized = normalizeQuestionType(type);
+  if (normalized === 'single_or_text') return '单选 / 可填写';
+  if (normalized === 'multiple_or_text') return '多选 / 可填写';
   if (isMultiSelectType(type)) return '多选题';
   if (isTextInputType(type)) return '文本题';
-  if (normalizeQuestionType(type) === 'confirmation') return '确认';
+  if (normalized === 'confirmation') return '确认';
   return '单选题';
 }
 

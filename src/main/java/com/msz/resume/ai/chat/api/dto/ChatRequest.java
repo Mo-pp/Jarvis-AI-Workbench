@@ -2,6 +2,8 @@ package com.msz.resume.ai.chat.api.dto;
 
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * 对话请求DTO
  * 接收前端发送的对话请求参数
@@ -48,4 +50,15 @@ public class ChatRequest {
      * 后端会自动将文件内容注入到消息上下文中
      */
     private String fileId;
+
+    /**
+     * 图片附件 ID 列表。图片通过 /api/files/upload 上传后短期存 Redis，
+     * 对话时后端会将其组装为多模态 ImageContent。
+     */
+    private List<String> imageFileIds;
+
+    /**
+     * 通用附件 ID 列表，当前主要用于图片；保留扩展空间。
+     */
+    private List<String> attachmentIds;
 }

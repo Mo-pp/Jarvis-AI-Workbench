@@ -24,6 +24,7 @@ import java.io.IOException;
 public class FileController {
 
     private static final long EXPIRES_IN_SECONDS = 15 * 60; // 15 分钟
+    private static final int IMAGE_PREVIEW_BASE64_LIMIT = 256 * 1024;
 
     private final FileParseService fileParseService;
     private final FileStorageService fileStorageService;
@@ -66,11 +67,11 @@ public class FileController {
         if (!fileParseService.isSupported(fileName)) {
             log.warn("[FileController] 不支持的文件类型: {}", fileName);
             return ResponseEntity.badRequest()
-                    .body(FileUploadResponse.builder()
-                            .fileName(fileName)
-                            .success(false)
-                            .errorMessage("不支持的文件类型。支持：PDF、Word (.doc/.docx)、TXT、HTML")
-                            .build());
+                            .body(FileUploadResponse.builder()
+                                    .fileName(fileName)
+                                    .success(false)
+                                    .errorMessage("不支持的文件类型。支持：PDF、Word (.doc/.docx)、TXT、HTML、PNG、JPEG、WEBP、GIF")
+                                    .build());
         }
 
         try {
@@ -146,11 +147,24 @@ public class FileController {
                 .fileId(parsedFile.getFileId())
                 .fileName(parsedFile.getFileName())
                 .fileType(parsedFile.getFileType())
+                .fileKind(parsedFile.getFileKind())
+                .mimeType(parsedFile.getMimeType())
                 .fileSize(parsedFile.getFileSize())
                 .contentPreview(contentPreview)
+                .previewUrl(imagePreviewUrl(parsedFile))
                 .success(parsedFile.isSuccess())
                 .errorMessage(parsedFile.getErrorMessage())
                 .expiresInSeconds(EXPIRES_IN_SECONDS)
                 .build();
+    }
+
+    private String imagePreviewUrl(ParsedFile parsedFile) {
+        if (!"image".equals(parsedFile.getFileKind())
+                || parsedFile.getBase64Data() == null
+                || parsedFile.getMimeType() == null
+                || parsedFile.getBase64Data().length() > IMAGE_PREVIEW_BASE64_LIMIT) {
+            return null;
+        }
+        return "data:" + parsedFile.getMimeType() + ";base64," + parsedFile.getBase64Data();
     }
 }

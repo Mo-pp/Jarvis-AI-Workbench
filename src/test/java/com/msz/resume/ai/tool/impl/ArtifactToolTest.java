@@ -35,7 +35,7 @@ class ArtifactToolTest {
                         .build())
                 .build();
 
-        String result = tool.publishArtifact("optimize_result", null, optimizeResult, null);
+        String result = tool.publishArtifact("optimize_result", null, optimizeResult, null, null);
 
         JsonNode root = OBJECT_MAPPER.readTree(result);
         assertEquals("optimize_result", root.path("type").asText());
@@ -48,7 +48,7 @@ class ArtifactToolTest {
     void publishArtifactShouldReturnErrorWhenPayloadMissing() {
         ArtifactTool tool = new ArtifactTool();
 
-        String result = tool.publishArtifact("optimize_result", null, null, null);
+        String result = tool.publishArtifact("optimize_result", null, null, null, null);
 
         assertTrue(result.contains("\"type\":\"error\""));
         assertTrue(result.contains("artifact 内容缺少必要字段"));

@@ -103,6 +103,25 @@ class DefaultAutocompactTest {
     }
 
     @Test
+    @DisplayName("成功压缩时返回 checkpoint 所需 split metadata")
+    void compact_whenSuccess_shouldReturnCheckpointMetadata() {
+        List<ChatMessage> messages = createMessages(20);
+
+        tokenEstimator.setEstimates(80000, 5000);
+        splitCalculator.setSplitResult(SplitResult.of(10, 30000, 10));
+        chatModel.setResponse(AiMessage.from("<summary>摘要内容</summary>"));
+
+        AutocompactResult result = autocompact.compact(messages, "session1");
+
+        assertTrue(result.success());
+        assertEquals(10, result.splitIndex());
+        assertEquals(10, result.preservedCount());
+        assertEquals(1, result.summaryPrefixMessages().size());
+        assertEquals(result.summaryPrefixMessages().getFirst(), result.messages().getFirst());
+        assertEquals(messages.get(10), result.messages().get(1));
+    }
+
+    @Test
     @DisplayName("熔断器触发时跳过压缩")
     void compact_whenCircuitBreakerTripped_shouldSkip() {
         List<ChatMessage> messages = createMessages(20);

@@ -1,5 +1,7 @@
 package com.msz.resume.ai.chat.runtime.node.inner;
 
+import com.msz.resume.ai.chat.session.converter.ChatMessageTextExtractor;
+import com.msz.resume.ai.chat.runtime.logging.LogSanitizer;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
@@ -33,7 +35,7 @@ final class MessageLogUtils {
                     text != null ? summarizeContent(text) : "null",
                     tools);
         } else if (msg instanceof UserMessage userMsg) {
-            return summarizeContent(userMsg.singleText());
+            return summarizeContent(ChatMessageTextExtractor.userText(userMsg));
         } else if (msg instanceof SystemMessage sysMsg) {
             return "(系统提示词) " + summarizeContent(sysMsg.text());
         } else if (msg instanceof ToolExecutionResultMessage toolMsg) {
@@ -47,11 +49,12 @@ final class MessageLogUtils {
      */
     static String summarizeContent(String content) {
         if (content == null) return "null";
-        int len = content.length();
+        String sanitized = LogSanitizer.sanitizeLargeInlineData(content);
+        int len = sanitized.length();
         if (len <= 200) {
-            return content;
+            return sanitized;
         }
-        return String.format("(%d字符) %s...", len, content.substring(0, 200));
+        return String.format("(%d字符) %s...", len, sanitized.substring(0, 200));
     }
 
     /**
@@ -59,6 +62,7 @@ final class MessageLogUtils {
      */
     static String truncate(String text, int maxLength) {
         if (text == null) return "null";
-        return text.length() > maxLength ? text.substring(0, maxLength) + "..." : text;
+        String sanitized = LogSanitizer.sanitizeLargeInlineData(text);
+        return sanitized.length() > maxLength ? sanitized.substring(0, maxLength) + "..." : sanitized;
     }
 }

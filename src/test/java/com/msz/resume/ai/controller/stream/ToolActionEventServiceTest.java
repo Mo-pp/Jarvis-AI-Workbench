@@ -148,4 +148,34 @@ class ToolActionEventServiceTest {
         assertEquals("处理 Skill", payload.get("groupTitle"));
         assertEquals(List.of("viking://agent/skills/ui-ux-pro-max/references/glass.md"), resourceUris);
     }
+
+    @Test
+    @DisplayName("报销 Demo 工具有企业流程分组和可读摘要")
+    void expenseDemoToolHasEnterpriseWorkflowDisplay() {
+        ToolExecutionRequest request = ToolExecutionRequest.builder()
+                .id("call_expense")
+                .name("createExpenseDraft")
+                .arguments("""
+                        {"employeeName":"莫仕铮","department":"研发部","tripPurpose":"客户现场技术支持","approver":"张经理"}
+                        """)
+                .build();
+
+        Map<String, Object> payload = service.previewPayloadForTest(
+                request,
+                "success",
+                service.summarizeResultForTest(
+                        "createExpenseDraft",
+                        """
+                                {"status":"mock_created","draftId":"EXP-DEMO-20260526-0001"}
+                                """
+                ),
+                null
+        );
+
+        assertEquals("创建 OA 草稿", payload.get("title"));
+        assertEquals("处理企业报销流程", payload.get("groupTitle"));
+        assertEquals("expense_demo", payload.get("groupKind"));
+        assertEquals("申请人：莫仕铮 · 部门：研发部", payload.get("description"));
+        assertEquals("Mock OA 草稿已创建：EXP-DEMO-20260526-0001", payload.get("summary"));
+    }
 }

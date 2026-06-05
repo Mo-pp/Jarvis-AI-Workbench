@@ -1,6 +1,7 @@
 package com.msz.resume.ai.chat.runtime.state;
 
 import com.msz.resume.ai.agent.SubAgentType;
+import com.msz.resume.ai.chat.compression.model.LlmContextCheckpoint;
 import com.msz.resume.ai.chat.compression.model.CacheUsage;
 import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
 import com.msz.resume.ai.chat.prompt.model.UserProfile;
@@ -58,6 +59,12 @@ public class QueryLoopState extends AgentState{
      * 图片描述：记录上下文压缩的进度，标记哪些消息被压缩
      */
     public static final String AUTO_COMPACT_TRACKING = "autoCompactTracking";
+
+    /**
+     * LLM 专用上下文压缩 checkpoint。
+     * 用户可见完整消息仍保存在 MESSAGE_HISTORY；模型请求使用该 checkpoint 生成投影视图。
+     */
+    public static final String LLM_CONTEXT_CHECKPOINT = "llmContextCheckpoint";
 
 
     /**
@@ -259,6 +266,7 @@ public class QueryLoopState extends AgentState{
             Map.entry(MESSAGE_HISTORY, Channels.appender(ArrayList::new)),
             Map.entry(TOOL_USE_CONTEXT, Channels.appender(ArrayList::new)),
             Map.entry(AUTO_COMPACT_TRACKING, Channels.appender(ArrayList::new)),
+            Map.entry(LLM_CONTEXT_CHECKPOINT, Channels.base(LlmContextCheckpoint::empty)),
             Map.entry(MAX_TOKEN_RECOVERY_COUNT, Channels.base(() -> 0)),
             Map.entry(HAS_ATTEMPTED_COMPACT, Channels.base(() -> false)),
             Map.entry(TURN_COUNT, Channels.base(() -> 0)),
@@ -318,6 +326,10 @@ public class QueryLoopState extends AgentState{
     /** 取上下文压缩追踪信息。 */
     public List<Object> getAutoCompactTracking() {
         return this.<List<Object>>value(AUTO_COMPACT_TRACKING).orElse(new ArrayList<>());
+    }
+
+    public LlmContextCheckpoint getLlmContextCheckpoint() {
+        return this.<LlmContextCheckpoint>value(LLM_CONTEXT_CHECKPOINT).orElse(LlmContextCheckpoint.empty());
     }
 
     /** 取 Token 超限恢复次数。 */

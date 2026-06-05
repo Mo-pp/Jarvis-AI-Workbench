@@ -4,6 +4,7 @@ import com.msz.resume.ai.chat.runtime.trace.TraceService;
 import com.msz.resume.ai.chat.runtime.trace.ArtifactActionEventService;
 import com.msz.resume.ai.chat.runtime.trace.AssistantCheckpointService;
 import com.msz.resume.ai.chat.runtime.trace.ToolActionEventService;
+import com.msz.resume.ai.chat.runtime.trace.langfuse.LangfuseTracingService;
 import com.msz.resume.ai.hook.HookContext;
 import com.msz.resume.ai.hook.HookEngine;
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
@@ -44,6 +45,7 @@ public class NormalToolStrategy implements ToolExecutionStrategy {
     private final ToolActionEventService toolActionEventService;
     private final ArtifactActionEventService artifactActionEventService;
     private final AssistantCheckpointService assistantCheckpointService;
+    private final LangfuseTracingService langfuseTracingService;
 
     /** 注入普通工具执行、trace 事件和任务检查点所需依赖。 */
     public NormalToolStrategy(ToolRegistry toolRegistry,
@@ -51,13 +53,15 @@ public class NormalToolStrategy implements ToolExecutionStrategy {
                               TraceService traceService,
                               ToolActionEventService toolActionEventService,
                               ArtifactActionEventService artifactActionEventService,
-                              AssistantCheckpointService assistantCheckpointService) {
+                              AssistantCheckpointService assistantCheckpointService,
+                              LangfuseTracingService langfuseTracingService) {
         this.toolRegistry = toolRegistry;
         this.hookEngine = hookEngine;
         this.traceService = traceService;
         this.toolActionEventService = toolActionEventService;
         this.artifactActionEventService = artifactActionEventService;
         this.assistantCheckpointService = assistantCheckpointService;
+        this.langfuseTracingService = langfuseTracingService;
     }
 
     @Override
@@ -109,6 +113,7 @@ public class NormalToolStrategy implements ToolExecutionStrategy {
                         contexts.add(req);
                         transition = ToolExecutionResult.TRANSITION_FAILED;
                         toolActionEventService.toolFailed(context.traceContext(), context.agentDescriptor(), req, errorMsg);
+                        langfuseTracingService.recordToolResult(context.traceContext(), req, null, "failed", errorMsg);
                         if (context.traceContext() != null) {
                             traceService.failToolCall(context.traceContext(), context.agentDescriptor(), req);
                         }
@@ -145,6 +150,7 @@ public class NormalToolStrategy implements ToolExecutionStrategy {
 
                     results.add(ToolExecutionResultMessage.from(req, toolResult));
                     contexts.add(req);
+                    langfuseTracingService.recordToolResult(context.traceContext(), req, toolResult, "success", null);
                     if (context.traceContext() != null) {
                         traceService.completeToolCall(context.traceContext(), context.agentDescriptor(), req);
                     }
@@ -163,6 +169,7 @@ public class NormalToolStrategy implements ToolExecutionStrategy {
                     contexts.add(req);
                     transition = ToolExecutionResult.TRANSITION_FAILED;
                     toolActionEventService.toolFailed(context.traceContext(), context.agentDescriptor(), req, errorMsg);
+                    langfuseTracingService.recordToolResult(context.traceContext(), req, null, "failed", errorMsg);
                     if (context.traceContext() != null) {
                         traceService.failToolCall(context.traceContext(), context.agentDescriptor(), req);
                     }
@@ -237,6 +244,10 @@ public class NormalToolStrategy implements ToolExecutionStrategy {
             case "generateMindmap" -> "正在生成结构图";
             case "getResumeGuide", "getOptimizeGuide" -> "正在读取生成规则";
             case "toolSearch" -> "正在加载工具说明";
+            case "searchExpensePolicy" -> "正在查询企业报销制度";
+            case "parseExpenseAttachment" -> "正在解析报销材料";
+            case "checkExpenseRules" -> "正在对照制度校验费用";
+            case "createExpenseDraft" -> "正在创建 Mock OA 报销草稿";
             default -> null;
         };
     }

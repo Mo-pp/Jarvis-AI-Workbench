@@ -1,5 +1,6 @@
 package com.msz.resume.ai.chat.compression.config;
 
+import com.msz.resume.ai.chat.session.converter.ChatMessageTextExtractor;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessage;
 import dev.langchain4j.data.message.SystemMessage;
@@ -99,7 +100,7 @@ public TokenCountEstimator tokenCountEstimator() {
             if (msg instanceof AiMessage aiMsg && aiMsg.text() != null) {
                 return aiMsg.text().length();
             } else if (msg instanceof UserMessage userMsg) {
-                return userMsg.singleText().length();
+                return ChatMessageTextExtractor.userText(userMsg).length();
             } else if (msg instanceof SystemMessage sysMsg) {
                 return sysMsg.text().length();
             } else if (msg instanceof ToolExecutionResultMessage toolMsg) {

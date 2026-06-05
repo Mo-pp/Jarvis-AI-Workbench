@@ -3,11 +3,13 @@ package com.msz.resume.ai.chat.llm.config;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiChatModel;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.openai.OpenAiResponsesStreamingChatModel;
 import dev.langchain4j.model.openai.OpenAiStreamingChatModel;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
 class LLMConfigTest {
@@ -36,10 +38,14 @@ class LLMConfigTest {
         config.getGpt().setBaseUrl("https://api.openai.com/v1");
         config.getGpt().setModel("gpt-5.4");
         config.getGpt().setWireApi("chat");
+        config.getGpt().setReasoningEffort("high");
 
         StreamingChatModel streamingChatModel = config.gptStreamingChatModel();
 
-        assertInstanceOf(OpenAiStreamingChatModel.class, streamingChatModel);
+        OpenAiStreamingChatModel openAiStreamingChatModel =
+                assertInstanceOf(OpenAiStreamingChatModel.class, streamingChatModel);
+        OpenAiChatRequestParameters parameters = openAiStreamingChatModel.defaultRequestParameters();
+        assertEquals("high", parameters.reasoningEffort());
     }
 
     @Test
