@@ -82,7 +82,7 @@ public class ResumeGuideTool {
             - publishArtifact 成功后本轮会结束；如果需要评分，应在同一批工具调用中先调用 publishArtifact 发布 resume，再调用 evaluateResume。不要计划先等 evaluateResume 返回后再发布 resume。
             - 调用 evaluateResume 时，对原始简历文本和 Jarvis 生成预览简历做评分；只有当前上下文明确包含 JD 或岗位要求时，才把 jobDescription 传给 evaluateResume，否则不要生成 JD 匹配度评分。
             - 发布到工作台后，如需补充说明，只说极简的一句结果摘要即可；不要在 artifact 之前为了“解释”先输出长篇正文。
-            - 如果手机号、邮箱、日期等信息缺失，可以留空或使用用户已允许的占位值，不要为了导出连续追问。
+            - 缺失字段必须留空或省略；不要输出 XXX、未命名候选人、目标职位、学校名称、公司名称、项目名称、奖项名称等占位文本。除非用户明确提供某个占位值，否则不要自行补占位。
 
             ### 润色原则
             1. **工作描述**：使用动词开头（负责、主导、参与、设计、实现、优化、搭建、重构）
@@ -98,6 +98,14 @@ public class ResumeGuideTool {
             - 链接信息：如果用户提供 GitHub、作品集、线上演示、项目地址、博客等链接，应保留在合适字段或描述中，帮助链接加分。
             - 技术亮点：真实经历里有算法、高并发、分布式、性能优化、AI/RAG/Agent、复杂工程治理等内容时，要提炼成亮点，不要淡化成普通 CRUD。
             - 如果用户提供 JD 或岗位要求，生成内容必须贴近 JD 关键词和核心职责；JD 相关性会显著影响评分。
+            - 原始简历里的项目地址、GitHub、在线演示、博客、作品集、技术栈、压测指标、性能指标、QPS、P95、成本下降、采纳率等属于强事实信号，必须保留；可以优化表达，但不能删除、改弱或替换成泛化描述。
+            - 项目经历支持 techStack 和 links 字段。原文出现“技术栈：...”时写入 techStack，出现“项目地址/GitHub/在线演示/项目链接”时写入 links，不要塞进 description 后丢失结构化展示。
+
+            ### 排版控制
+            - resume 可以包含 resumeStyle 字段，用于控制工作台预览和 PDF 导出排版。
+            - resumeStyle.pageMarginX / pageMarginY 控制左右/上下页边距，单位 px，推荐范围 28-56。
+            - resumeStyle.sections 支持 summary、education、work、project、campus、award、skills，每个分区可设置 fontSize（推荐 10.8-13.5）和 lineHeight（推荐 1.25-1.85）。
+            - 当内容过密时，可以适当降低对应分区字号或行距；当内容过少时，可以适当增大行距和页边距，但不要用空字段或占位文字撑版面。
 
             ### 单页优先与模板适配
             - 默认生成适合 A4 单页展示的简历，不要输出冗长段落；除非用户明确要求多页，否则按 1 页控制内容密度。
@@ -107,14 +115,16 @@ public class ResumeGuideTool {
             - 如果内容非常多且确实无法压缩到 1 页，在生成最终 resume artifact 前必须调用 AskUserQuestionTool 询问用户是否允许 2 页；未获确认时继续压缩到 1 页。
 
             ### 个人总结
-            - 50-100 字
-            - 突出核心技能和经验亮点
-            - 与求职岗位匹配
+            - 默认不要生成个人总结。只有原始简历明确包含“个人总结/自我评价/个人优势”等摘要段，或用户明确要求补摘要时，才填写 summary。
+            - 如果确实填写 summary，控制在 50-90 字，突出核心技能和经验亮点，与求职岗位匹配。
+            - 不要为了填满版面编造 summary，把空间优先留给项目、技术栈、链接和量化成果。
 
             ### 技能列表
             - 技能名称 + 掌握程度（精通/熟练/熟悉/了解）
             - 按重要程度排序
             - 与岗位要求匹配
+            - 技能名称和分类尽量保留原始简历结构，例如“缓存与中间件”“AI 应用开发”“工程能力”；不要随意改名导致用户原有技术栈丢失
+            - 技能说明多个要点用换行符分隔；如果原文用“· 小标题：内容”，保留这种小标题结构
 
             ### 输出格式
             必须输出 JSON 格式，结构参考 template 字段。
@@ -125,9 +135,10 @@ public class ResumeGuideTool {
             ### 注意事项
             - 不要编造用户没有的经历
             - 不要为了评分编造原始简历文本；图片、PDF、Word、TXT、HTML 的原始简历评分只使用当前上下文中已经提取出的文字
-            - 如果信息不完整，合理推断或留空
+            - 如果信息不完整，合理推断或留空；不能把没有出现在原始简历里的状态、经验、薪资、到岗时间等写到顶部基础信息里
             - 日期格式统一为 "YYYY.MM" 或 "YYYY年MM月"
             - 工作描述多个要点用换行符分隔
+            - 技能描述多个要点也用换行符分隔，不要为了省事把所有技能挤成一个长句
             """;
 
     /**
@@ -144,6 +155,7 @@ public class ResumeGuideTool {
                         .experience("")
                         .build())
                 .summary("")
+                .resumeStyle(ResumeVO.ResumeStyle.builder().build())
                 .educationList(List.of(
                         ResumeVO.Education.builder()
                                 .school("")
@@ -167,6 +179,8 @@ public class ResumeGuideTool {
                         ResumeVO.Project.builder()
                                 .name("")
                                 .role("")
+                                .techStack("")
+                                .links("")
                                 .startDate("")
                                 .endDate("")
                                 .description("")
@@ -194,7 +208,17 @@ public class ResumeGuideTool {
                         .position("Java后端开发工程师")
                         .experience("5年")
                         .build())
-                .summary("5年Java后端开发经验，擅长高并发系统设计与分布式架构。曾主导日均请求量超10亿的核心系统开发，对性能优化、稳定性保障有丰富经验。")
+                .summary("")
+                .resumeStyle(ResumeVO.ResumeStyle.builder()
+                        .pageMarginX(44)
+                        .pageMarginY(36)
+                        .sections(java.util.Map.of(
+                                "summary", ResumeVO.ResumeSectionStyle.builder().fontSize(12.2).lineHeight(1.62).build(),
+                                "work", ResumeVO.ResumeSectionStyle.builder().fontSize(11.9).lineHeight(1.56).build(),
+                                "project", ResumeVO.ResumeSectionStyle.builder().fontSize(11.9).lineHeight(1.56).build(),
+                                "skills", ResumeVO.ResumeSectionStyle.builder().fontSize(11.9).lineHeight(1.58).build()
+                        ))
+                        .build())
                 .educationList(List.of(
                         ResumeVO.Education.builder()
                                 .school("北京大学")
@@ -230,6 +254,8 @@ public class ResumeGuideTool {
                         ResumeVO.Project.builder()
                                 .name("云存储服务重构")
                                 .role("核心开发")
+                                .techStack("Java、Spring Boot、MySQL、Redis、Kafka")
+                                .links("GitHub：https://github.com/example/project")
                                 .startDate("2022.06")
                                 .endDate("2023.03")
                                 .description("主导存储服务架构升级，引入分层存储策略，降低存储成本40%")

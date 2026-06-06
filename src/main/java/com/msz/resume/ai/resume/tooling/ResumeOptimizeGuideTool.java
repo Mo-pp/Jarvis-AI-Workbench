@@ -106,12 +106,25 @@ public class ResumeOptimizeGuideTool {
             - 链接加分：用户已提供 GitHub、Demo、项目地址、博客、作品集时必须保留，并放在面试官容易看到的位置。
             - 技术牛逼度：真实经历中的算法、高并发、分布式、性能优化、AI/RAG/Agent、复杂工程治理等要提炼为项目亮点。
             - 有 JD 时：优化后的简历必须围绕 JD 的必备技能、经验要求、业务场景和加分项调整表达；JD 相关性至少按 40% 以上重要性处理，本系统评分中固定为 45%。
+            - 不要为了完整度补 XXX、未命名、目标职位、学校名称、公司名称、项目名称等占位文字；用户没有给的信息应留空或省略，把空间留给真实高价值内容。
+            - 原始简历里的项目地址、GitHub、在线演示、博客、作品集、技术栈、压测指标、性能指标、QPS、P95、成本下降、采纳率等强事实信号必须保留；优化语言不能删除这些加分项。
+            - optimizedResume.projectList 每个项目可使用 techStack 和 links 字段。原文有“技术栈：...”必须写入 techStack；原文有“项目地址/GitHub/在线演示”必须写入 links。
+            - 技能分类和技术栈要以原始简历为准，不要随意改名或合并到导致用户原有能力点消失。
+            - 默认不要新增 summary。只有原始简历已有个人总结/自我评价，或用户明确要求补摘要，才填写 optimizedResume.summary。
 
             #### 6. 一页简历约束
             默认把 optimizedResume 控制为 A4 单页友好的内容密度；普通经历每段保留 2-4 个最高价值 bullet，优先删除重复、空泛、低技术含量描述。
             bullet 推荐写成 `模块亮点：基于 xxx，采用 xxx，实现 xxx，提升/降低 xxx%`，让前端模板能把冒号前小标题高亮。
+            如果原文 bullet 使用 `· 小标题：内容`，可以保留这种黑点 + 小标题结构；多个短信息可以并列写在项目元信息行，不要拆出大量留白。
             对关键技术、核心指标、延迟/成本/命中率/采纳率等重点使用 `**...**` 标记，便于前端模板加粗。
             如果候选人内容确实很强且无法压缩到 1 页，在发布 2 页版本前必须调用 AskUserQuestionTool 询问用户是否允许；未获确认时继续压缩为 1 页。
+
+            #### 7. 排版控制
+            optimizedResume 可以包含 resumeStyle：
+            - pageMarginX / pageMarginY：左右/上下页边距，单位 px，推荐 28-56。
+            - sections.summary/education/work/project/campus/award/skills：可分别设置 fontSize 和 lineHeight。
+            - 内容过密时先精简低价值文字，再适当降低对应分区字号或行距；不要用过小字号掩盖冗长简历。
+            - 技能描述多个要点使用换行符分隔，便于前端按行展示。
 
             ### 输出格式
             - 如果用户的目标是“优化简历”“生成优化结果到工作台”“顺便给我可编辑的优化版本”，优先产出 workbench artifact，而不是先给冗长 prose。
@@ -128,6 +141,7 @@ public class ResumeOptimizeGuideTool {
             - suggestions：优化建议列表
             - highlights：建议突出的亮点
             - optimizedResume：可选，优化后的完整简历对象
+              - optimizedResume.resumeStyle：可选，排版控制对象，支持 pageMarginX/pageMarginY 和各分区 fontSize/lineHeight
             - evaluation：可选，新版简历评价与 JD 匹配度评分结果；若 evaluateResume 已返回结果，应放入该字段或单独发布 resume_evaluation artifact
             - 最终 JSON 必须严格合法：不要包裹 Markdown 代码块，不要添加说明文字；字符串内部如需英文双引号，必须转义为 \\"，或改用中文引号“”。
 

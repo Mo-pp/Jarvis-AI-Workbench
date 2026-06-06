@@ -32,4 +32,18 @@ class ResumeGuideToolTest {
         assertTrue(guide.contains("不要先输出整份长篇简历草稿"));
         assertTrue(guide.contains("发布到工作台后"));
     }
+
+    @Test
+    @DisplayName("getResumeGuide 返回说明应禁止占位并支持分区排版控制")
+    void resumeGuideInstructionShouldAvoidPlaceholdersAndExposeStyleControls() {
+        String guide = new ResumeGuideTool().getResumeGuide();
+
+        assertTrue(guide.contains("不要输出 XXX、未命名候选人、目标职位、学校名称、公司名称、项目名称、奖项名称等占位文本"));
+        assertTrue(guide.contains("resumeStyle.pageMarginX / pageMarginY"));
+        assertTrue(guide.contains("summary、education、work、project、campus、award、skills"));
+        assertTrue(guide.contains("生成简历时要主动提高后续 evaluateResume 的质量评分"));
+        assertTrue(guide.contains("原始简历里的项目地址、GitHub、在线演示"));
+        assertTrue(guide.contains("出现“技术栈：...”时写入 techStack"));
+        assertTrue(guide.contains("默认不要生成个人总结"));
+    }
 }

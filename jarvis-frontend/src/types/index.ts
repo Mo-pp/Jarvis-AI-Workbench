@@ -91,12 +91,33 @@ export interface ResumeVO {
   basicInfo: BasicInfo;
   jobIntention?: JobIntention;
   summary?: string;
+  resumeStyle?: ResumeStyle;
   educationList: Education[];
   workList: WorkExperience[];
   projectList: Project[];
   campusList?: CampusExperience[];
   awardList?: Award[];
   skillList: Skill[];
+}
+
+export type ResumeStyleSectionKey =
+  | 'summary'
+  | 'education'
+  | 'work'
+  | 'project'
+  | 'campus'
+  | 'award'
+  | 'skills';
+
+export interface ResumeSectionStyle {
+  fontSize?: number;
+  lineHeight?: number;
+}
+
+export interface ResumeStyle {
+  pageMarginX?: number;
+  pageMarginY?: number;
+  sections?: Partial<Record<ResumeStyleSectionKey, ResumeSectionStyle>>;
 }
 
 export interface BasicInfo {
@@ -144,6 +165,8 @@ export interface WorkExperience {
 export interface Project {
   name?: string;
   role?: string;
+  techStack?: string;
+  links?: string;
   startDate?: string;
   endDate?: string;
   description?: string;

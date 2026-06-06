@@ -9,6 +9,8 @@ import java.io.Serial;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
  * 简历数据传输对象
@@ -54,6 +56,12 @@ public class ResumeVO implements Serializable {
     private String summary;
 
     /**
+     * 简历排版样式
+     */
+    @Builder.Default
+    private ResumeStyle resumeStyle = new ResumeStyle();
+
+    /**
      * 教育经历列表
      */
     @Builder.Default
@@ -90,6 +98,46 @@ public class ResumeVO implements Serializable {
     private List<Skill> skillList = new ArrayList<>();
 
     // ==================== 内部类定义 ====================
+
+    /**
+     * 简历整体与分区排版样式
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ResumeStyle implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+
+        /** 横向页边距，单位 px */
+        private Integer pageMarginX;
+
+        /** 纵向页边距，单位 px */
+        private Integer pageMarginY;
+
+        /** 分区排版设置，key 支持 summary/education/work/project/campus/award/skills */
+        @Builder.Default
+        private Map<String, ResumeSectionStyle> sections = new LinkedHashMap<>();
+    }
+
+    /**
+     * 分区字号与行距
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ResumeSectionStyle implements Serializable {
+        @Serial
+        private static final long serialVersionUID = 1L;
+
+        /** 字号，单位 px */
+        private Double fontSize;
+
+        /** 行高，倍数 */
+        private Double lineHeight;
+    }
 
     /**
      * 基本信息
@@ -245,6 +293,12 @@ public class ResumeVO implements Serializable {
 
         /** 担任角色 */
         private String role;
+
+        /** 技术栈 */
+        private String techStack;
+
+        /** 项目地址、GitHub、在线演示等链接 */
+        private String links;
 
         /** 开始时间 */
         private String startDate;

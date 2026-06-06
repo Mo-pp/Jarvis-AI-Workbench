@@ -470,6 +470,7 @@ function normalizeResumePayload(payload: unknown): ResumeVO | null {
     campusList: asRecordArray(candidate.campusList),
     awardList: asRecordArray(candidate.awardList),
     skillList: asRecordArray(candidate.skillList),
+    resumeStyle: isRecord(candidate.resumeStyle) ? candidate.resumeStyle : undefined,
   };
 }
 
@@ -1789,9 +1790,14 @@ function buildResumeOptimizePrompt(resume: ResumeVO, request: ResumeOptimizeRequ
     '2. 优先针对目标岗位和 JD 分析匹配度、缺口、优化建议。',
     '3. 生成 resume 或 optimize_result 后，请调用 evaluateResume 生成新版 evaluation；没有 JD 时不要传 jobDescription，不要输出 JD 匹配度。',
     '4. 优化时要主动贴近评分标准：繁简适中、结果/影响导向、保留学历与链接加分、突出真实技术难点，有 JD 时重点围绕 JD 必备项和加分项调整。',
-    '5. 最终必须返回一个 JSON 对象，不要包裹 Markdown 代码块。',
-    '6. JSON 格式优先为 {"type":"optimize_result","matchScore":0-100,"matchAnalysis":{"matchedSkills":[],"missingSkills":[],"experienceMatch":"","educationMatch":"","matchedBonus":[]},"suggestions":[],"highlights":[],"optimizedResume":{...可选优化后简历...},"evaluation":{...可选评分结果...}}。',
-    '7. 如果你直接产出优化后的完整简历，也可以返回 {"type":"resume","resume":{...}}。',
+    '5. 不要补 XXX、未命名、目标职位、学校名称、公司名称、项目名称等占位文本；用户没有给的信息留空或省略。',
+    '6. 原简历已有的项目地址、GitHub、在线演示、技术栈、压测指标、QPS、P95、成本下降、采纳率等强事实信号必须保留；项目技术栈写入 project.techStack，项目地址/GitHub/在线演示写入 project.links。',
+    '7. 默认不要新增 summary；只有当前简历已有个人总结/自我评价，或用户明确要求补摘要，才填写 summary。',
+    '8. 技能分类和技术栈以原简历为准，不要随意改名、合并或删除；技能说明和项目描述可使用换行保留小标题结构。',
+    '9. 可以在 resume.resumeStyle 中调整排版：pageMarginX/pageMarginY 控制页边距，sections.summary/education/work/project/campus/award/skills 可分别设置 fontSize 和 lineHeight。',
+    '10. 最终必须返回一个 JSON 对象，不要包裹 Markdown 代码块。',
+    '11. JSON 格式优先为 {"type":"optimize_result","matchScore":0-100,"matchAnalysis":{"matchedSkills":[],"missingSkills":[],"experienceMatch":"","educationMatch":"","matchedBonus":[]},"suggestions":[],"highlights":[],"optimizedResume":{...可选优化后简历...},"evaluation":{...可选评分结果...}}。',
+    '12. 如果你直接产出优化后的完整简历，也可以返回 {"type":"resume","resume":{...}}。',
     '',
     `目标岗位：${request.targetPosition || resume.jobIntention?.position || resume.basicInfo?.position || '未指定'}`,
     `优化范围：${request.scope || 'full'}`,

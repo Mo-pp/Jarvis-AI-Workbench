@@ -16,6 +16,7 @@ import type {
   CampusExperience,
   Education,
   Project,
+  ResumeStyleSectionKey,
   ResumeVO,
   Skill,
   WorkExperience,
@@ -33,6 +34,7 @@ type BlockKind = 'header' | 'section_title' | 'section_summary' | 'item' | 'skil
 interface ResumeBlock {
   key: string;
   kind: BlockKind;
+  section?: ResumeStyleSectionKey;
   node: ReactNode;
 }
 
@@ -54,15 +56,44 @@ const EMPTY_PROJECT_LIST: Project[] = [];
 const EMPTY_CAMPUS_LIST: CampusExperience[] = [];
 const EMPTY_AWARD_LIST: Award[] = [];
 const EMPTY_SKILL_LIST: Skill[] = [];
+const STYLE_SECTION_KEYS: ResumeStyleSectionKey[] = [
+  'summary',
+  'education',
+  'work',
+  'project',
+  'campus',
+  'award',
+  'skills',
+];
 
 function text(value?: string, fallback = '') {
   return value?.trim() || fallback;
 }
 
+function normalizeInlineWhitespace(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function toFiniteNumber(value: unknown) {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function clampStyleNumber(value: unknown, min: number, max: number) {
+  const numeric = toFiniteNumber(value);
+  if (numeric === undefined) return undefined;
+  return Math.min(Math.max(numeric, min), max);
+}
+
+function hasAnyTextValue(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  return Object.values(value).some((item) => typeof item === 'string' && text(item).length > 0);
+}
+
 function splitLines(value?: string) {
-  return text(value)
+  return (typeof value === 'string' ? value : '')
     .split(/\r?\n|；|;/)
-    .map((line) => line.replace(/^[\s\-•*]+/, '').trim())
+    .map((line) => normalizeInlineWhitespace(line.replace(/^[\t ]*[·•*-]\s*/, '')))
     .filter(Boolean);
 }
 
@@ -107,7 +138,7 @@ function addTextPart(parts: ReactNode[], value: string, keyPrefix: string) {
 }
 
 function renderInlineText(value: string) {
-  const trimmed = text(value);
+  const trimmed = normalizeInlineWhitespace(typeof value === 'string' ? value : '');
   if (!trimmed) return null;
 
   const boldSegments: string[] = [];
@@ -164,13 +195,20 @@ function ResumeSectionTitle(props: { title: string; icon: ReactNode }) {
 }
 
 function ExperienceHeader(props: { title: string; subtitle?: string; meta?: string }) {
+  const title = text(props.title);
+  const subtitle = text(props.subtitle);
+  const meta = text(props.meta);
+  if (!title && !subtitle && !meta) return null;
+
   return (
     <div className="resume-preview-item-head">
-      <div>
-        <h4>{props.title || '未命名经历'}</h4>
-        {props.subtitle && <p>{renderInlineText(props.subtitle)}</p>}
-      </div>
-      {props.meta && <span>{props.meta}</span>}
+      {(title || subtitle) && (
+        <div>
+          {title && <h4>{title}</h4>}
+          {subtitle && <p>{renderInlineText(subtitle)}</p>}
+        </div>
+      )}
+      {meta && <span>{meta}</span>}
     </div>
   );
 }
@@ -184,6 +222,29 @@ function BulletList(props: { lines: string[] }) {
         <li key={`${line}-${index}`}>{renderInlineText(line)}</li>
       ))}
     </ul>
+  );
+}
+
+function ProjectMeta(props: { techStack?: string; links?: string }) {
+  const techStack = text(props.techStack);
+  const links = text(props.links);
+  if (!techStack && !links) return null;
+
+  return (
+    <div className="resume-project-meta">
+      {techStack && (
+        <p>
+          <strong className="resume-project-meta-label">技术栈：</strong>
+          <span className="resume-project-meta-value">{renderInlineText(techStack)}</span>
+        </p>
+      )}
+      {links && (
+        <p>
+          <strong className="resume-project-meta-label">项目地址：</strong>
+          <span className="resume-project-meta-value">{renderInlineText(links)}</span>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -225,6 +286,44 @@ function paginateBlocks(
   };
 }
 
+function contentHeightForFitMode(mode: ResumeFitMode, resume: ResumeVO) {
+  const pageMarginY = clampStyleNumber(resume.resumeStyle?.pageMarginY, 24, 72);
+  if (pageMarginY !== undefined) {
+    return PAPER_HEIGHT - pageMarginY * 2;
+  }
+  return FIT_MODE_CONTENT_HEIGHT[mode];
+}
+
+function buildPreviewStyle(resume: ResumeVO, previewScale: number): CSSProperties {
+  const cssVars: Record<string, string> = {
+    '--resume-preview-scale': String(previewScale),
+  };
+  const style = resume.resumeStyle;
+  const pageMarginX = clampStyleNumber(style?.pageMarginX, 24, 72);
+  const pageMarginY = clampStyleNumber(style?.pageMarginY, 24, 72);
+
+  if (pageMarginX !== undefined) {
+    cssVars['--resume-page-margin-x'] = `${pageMarginX}px`;
+  }
+  if (pageMarginY !== undefined) {
+    cssVars['--resume-page-margin-y'] = `${pageMarginY}px`;
+  }
+
+  STYLE_SECTION_KEYS.forEach((sectionKey) => {
+    const sectionStyle = style?.sections?.[sectionKey];
+    const fontSize = clampStyleNumber(sectionStyle?.fontSize, 10, 18);
+    const lineHeight = clampStyleNumber(sectionStyle?.lineHeight, 1.1, 2.4);
+    if (fontSize !== undefined) {
+      cssVars[`--resume-${sectionKey}-font-size`] = `${fontSize}px`;
+    }
+    if (lineHeight !== undefined) {
+      cssVars[`--resume-${sectionKey}-line-height`] = String(lineHeight);
+    }
+  });
+
+  return cssVars as CSSProperties;
+}
+
 export function ResumePreview({
   resume,
   templateId = 'blueSinglePage',
@@ -233,8 +332,8 @@ export function ResumePreview({
 }: ResumePreviewProps) {
   const basicInfo = resume.basicInfo || {};
   const jobIntention = resume.jobIntention || {};
-  const name = text(basicInfo.name, '未命名候选人');
-  const position = text(basicInfo.position || jobIntention.position, '目标职位');
+  const name = text(basicInfo.name);
+  const position = text(basicInfo.position || jobIntention.position);
   const summary = text(resume.summary);
   const educationList = resume.educationList || EMPTY_EDUCATION_LIST;
   const workList = resume.workList || EMPTY_WORK_LIST;
@@ -242,6 +341,7 @@ export function ResumePreview({
   const campusList = resume.campusList || EMPTY_CAMPUS_LIST;
   const awardList = resume.awardList || EMPTY_AWARD_LIST;
   const skillList = resume.skillList || EMPTY_SKILL_LIST;
+  const hasHeaderTitle = Boolean(name || position);
 
   const blocks = useMemo<ResumeBlock[]>(() => {
     const nextBlocks: ResumeBlock[] = [];
@@ -252,87 +352,81 @@ export function ResumePreview({
         ? { icon: <MapPin size={13} />, label: basicInfo.location || jobIntention.city }
         : null,
     ].filter(Boolean) as Array<{ icon: ReactNode; label?: string }>;
-    const profileItems = [
-      basicInfo.educationLevel,
-      basicInfo.experience,
-      basicInfo.status,
-      jobIntention.salary ? `期望薪资：${jobIntention.salary}` : '',
-      jobIntention.entryTime ? `到岗：${jobIntention.entryTime}` : '',
-    ].filter((item) => text(item));
+    if (hasHeaderTitle || contactItems.length > 0 || jobIntention.position || jobIntention.city) {
+      nextBlocks.push({
+        key: 'header',
+        kind: 'header',
+        node: (
+          <>
+            {hasHeaderTitle && (
+              <header className="resume-paper-header">
+                <div className="resume-paper-title">
+                  {name && <h2>{name}</h2>}
+                  {position && <p>{position}</p>}
+                </div>
+              </header>
+            )}
 
-    nextBlocks.push({
-      key: 'header',
-      kind: 'header',
-      node: (
-        <>
-          <header className="resume-paper-header">
-            <div className="resume-paper-title">
-              <h2>{name}</h2>
-              <p>{position}</p>
-            </div>
-            {profileItems.length > 0 && (
-              <div className="resume-paper-meta">
-                {profileItems.map((item) => (
-                  <span key={item}>{item}</span>
+            {contactItems.length > 0 && (
+              <div className="resume-contact-row">
+                {contactItems.map((item) => (
+                  <span key={item.label}>
+                    {item.icon}
+                    {item.label}
+                  </span>
                 ))}
               </div>
             )}
-          </header>
 
-          {contactItems.length > 0 && (
-            <div className="resume-contact-row">
-              {contactItems.map((item) => (
-                <span key={item.label}>
-                  {item.icon}
-                  {item.label}
-                </span>
-              ))}
-            </div>
-          )}
-
-          {(jobIntention.position || jobIntention.city) && (
-            <div className="resume-intention-row">
-              {jobIntention.position && <span>期望职位：{jobIntention.position}</span>}
-              {jobIntention.city && <span>城市：{jobIntention.city}</span>}
-            </div>
-          )}
-        </>
-      ),
-    });
+            {(jobIntention.position || jobIntention.city) && (
+              <div className="resume-intention-row">
+                {jobIntention.position && <span>期望职位：{jobIntention.position}</span>}
+                {jobIntention.city && <span>城市：{jobIntention.city}</span>}
+              </div>
+            )}
+          </>
+        ),
+      });
+    }
 
     if (summary) {
       nextBlocks.push({
         key: 'summary-title',
         kind: 'section_title',
+        section: 'summary',
         node: <ResumeSectionTitle title="个人总结" icon={<FileText size={15} />} />,
       });
       nextBlocks.push({
         key: 'summary-content',
         kind: 'section_summary',
+        section: 'summary',
         node: <p className="resume-summary">{renderInlineText(summary)}</p>,
       });
     }
 
     const pushItemSection = <T extends Education | WorkExperience | Project | CampusExperience | Award>(
-      sectionKey: string,
+      sectionKey: ResumeStyleSectionKey,
       title: string,
       icon: ReactNode,
       items: T[],
       renderHeader: (item: T, index: number) => ReactNode,
       getLines: (item: T) => string[],
     ) => {
-      if (items.length === 0) return;
+      const visibleItems = items.filter((item) => hasAnyTextValue(item));
+      if (visibleItems.length === 0) return;
 
       nextBlocks.push({
         key: `${sectionKey}-title`,
         kind: 'section_title',
+        section: sectionKey,
         node: <ResumeSectionTitle title={title} icon={icon} />,
       });
 
-      items.forEach((item, index) => {
+      visibleItems.forEach((item, index) => {
         nextBlocks.push({
           key: `${sectionKey}-${index}`,
           kind: 'item',
+          section: sectionKey,
           node: (
             <article className="resume-preview-item">
               {renderHeader(item, index)}
@@ -355,7 +449,7 @@ export function ResumePreview({
         return (
           <ExperienceHeader
             key={`education-header-${index}`}
-            title={text(item.school, '学校名称')}
+            title={text(item.school)}
             subtitle={subtitle}
             meta={dateRange(item.startDate, item.endDate)}
           />
@@ -374,7 +468,7 @@ export function ResumePreview({
         return (
           <ExperienceHeader
             key={`work-header-${index}`}
-            title={text(item.company, '公司名称')}
+            title={text(item.company)}
             subtitle={subtitle}
             meta={dateRange(item.startDate, item.endDate)}
           />
@@ -389,12 +483,15 @@ export function ResumePreview({
       <Briefcase size={15} />,
       projectList,
       (item, index) => (
-        <ExperienceHeader
-          key={`project-header-${index}`}
-          title={text(item.name, '项目名称')}
-          subtitle={text(item.role)}
-          meta={dateRange(item.startDate, item.endDate)}
-        />
+        <>
+          <ExperienceHeader
+            key={`project-header-${index}`}
+            title={text(item.name)}
+            subtitle={text(item.role)}
+            meta={dateRange(item.startDate, item.endDate)}
+          />
+          <ProjectMeta techStack={item.techStack} links={item.links} />
+        </>
       ),
       (item) => splitLines(item.description),
     );
@@ -407,7 +504,7 @@ export function ResumePreview({
       (item, index) => (
         <ExperienceHeader
           key={`campus-header-${index}`}
-          title={text(item.organization, '组织名称')}
+          title={text(item.organization)}
           subtitle={text(item.position)}
           meta={dateRange(item.startDate, item.endDate)}
         />
@@ -423,30 +520,34 @@ export function ResumePreview({
       (item, index) => (
         <ExperienceHeader
           key={`award-header-${index}`}
-          title={text(item.name, '奖项名称')}
+          title={text(item.name)}
           meta={text(item.date)}
         />
       ),
       (item) => splitLines(item.description),
     );
 
-    if (skillList.length > 0) {
+    const visibleSkills = skillList.filter((skill) => hasAnyTextValue(skill));
+    if (visibleSkills.length > 0) {
       nextBlocks.push({
         key: 'skills-title',
         kind: 'section_title',
+        section: 'skills',
         node: <ResumeSectionTitle title="专业技能" icon={<Sparkles size={15} />} />,
       });
       nextBlocks.push({
         key: 'skills-content',
         kind: 'skills',
+        section: 'skills',
         node: (
           <div className="resume-preview-skills">
-            {skillList.map((skill: Skill, index) => {
-              const label = [text(skill.name, '技能'), text(skill.level)].filter(Boolean).join(' · ');
+            {visibleSkills.map((skill: Skill, index) => {
+              const label = [text(skill.name), text(skill.level)].filter(Boolean).join(' · ');
+              const description = normalizeInlineWhitespace(skill.description || '');
               return (
                 <span key={`${label}-${index}`} className="resume-preview-skill">
-                  <strong>{renderInlineText(label)}</strong>
-                  {skill.description && <small>{renderInlineText(skill.description)}</small>}
+                  {label && <strong>{renderInlineText(label)}</strong>}
+                  {description && <small>{renderInlineText(description)}</small>}
                 </span>
               );
             })}
@@ -463,9 +564,9 @@ export function ResumePreview({
     basicInfo.experience,
     basicInfo.location,
     basicInfo.phone,
-    basicInfo.status,
     campusList,
     educationList,
+    hasHeaderTitle,
     jobIntention.city,
     jobIntention.entryTime,
     jobIntention.position,
@@ -516,7 +617,7 @@ export function ResumePreview({
       });
       return {
         mode,
-        result: paginateBlocks(measuredBlocks, FIT_MODE_CONTENT_HEIGHT[mode]),
+        result: paginateBlocks(measuredBlocks, contentHeightForFitMode(mode, resume)),
       };
     });
 
@@ -541,11 +642,12 @@ export function ResumePreview({
         overflow: nextOverflow,
       });
     }
-  }, [blocks, onPageStateChange, templateId]);
+  }, [blocks, onPageStateChange, resume.resumeStyle, templateId]);
 
   const blockMap = useMemo(() => new Map(blocks.map((block) => [block.key, block.node])), [blocks]);
+  const blockSectionMap = useMemo(() => new Map(blocks.map((block) => [block.key, block.section])), [blocks]);
   const templateClass = templateClassName(templateId);
-  const previewStyle = { '--resume-preview-scale': String(previewScale) } as CSSProperties;
+  const previewStyle = buildPreviewStyle(resume, previewScale);
 
   return (
     <div ref={previewScrollRef} className="resume-preview-scroll">
@@ -563,7 +665,7 @@ export function ResumePreview({
         data-template-id={templateId}
         data-fit-mode={fitMode}
         data-page-count={pageBlocks.length}
-        aria-label={`${name} 的简历预览`}
+        aria-label={name ? `${name} 的简历预览` : '简历预览'}
       >
         {pageBlocks.map((page, pageIndex) => (
           <div
@@ -575,7 +677,12 @@ export function ResumePreview({
             <div className="resume-page-label">第 {pageIndex + 1} 页</div>
             <div className="resume-paper" data-page-index={pageIndex}>
               {page.map((blockKey) => (
-                <div key={blockKey} className="resume-page-block" data-page-block={blockKey}>
+                <div
+                  key={blockKey}
+                  className={`resume-page-block ${blockSectionMap.get(blockKey) ? `resume-section-${blockSectionMap.get(blockKey)}` : ''}`}
+                  data-page-block={blockKey}
+                  data-resume-section={blockSectionMap.get(blockKey)}
+                >
                   {blockMap.get(blockKey)}
                 </div>
               ))}
@@ -589,11 +696,17 @@ export function ResumePreview({
           <div
             key={mode}
             className={`resume-document resume-document-measure ${templateClass}`}
+            style={previewStyle}
             data-fit-mode={mode}
           >
             <div className="resume-paper resume-paper-measure" data-measure-fit-mode={mode}>
               {blocks.map((block) => (
-                <div key={block.key} data-block-key={block.key} className="resume-page-block">
+                <div
+                  key={block.key}
+                  data-block-key={block.key}
+                  className={`resume-page-block ${block.section ? `resume-section-${block.section}` : ''}`}
+                  data-resume-section={block.section}
+                >
                   {block.node}
                 </div>
               ))}

@@ -420,6 +420,8 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
             resume.getProjectList().forEach(item -> {
                 parts.add(item.getName());
                 parts.add(item.getRole());
+                parts.add(item.getTechStack());
+                parts.add(item.getLinks());
                 parts.add(item.getDescription());
             });
         }

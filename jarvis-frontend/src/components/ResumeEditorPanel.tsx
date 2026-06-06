@@ -1,5 +1,5 @@
-import { Briefcase, Building2, GraduationCap, Plus, Sparkles, Target, Trash2, UserRound } from 'lucide-react';
-import type { BasicInfo, JobIntention, ResumeVO } from '../types';
+import { Briefcase, Building2, GraduationCap, Plus, Sparkles, Target, Trash2, Type, UserRound } from 'lucide-react';
+import type { BasicInfo, JobIntention, ResumeStyle, ResumeStyleSectionKey, ResumeVO } from '../types';
 
 interface ResumeEditorPanelProps {
   resume: ResumeVO;
@@ -7,6 +7,25 @@ interface ResumeEditorPanelProps {
 }
 
 type ResumeListKey = 'educationList' | 'workList' | 'projectList' | 'skillList';
+
+const STYLE_SECTION_CONTROLS: Array<{ key: ResumeStyleSectionKey; label: string; defaultFontSize: number; defaultLineHeight: number }> = [
+  { key: 'summary', label: '个人总结', defaultFontSize: 12.2, defaultLineHeight: 1.62 },
+  { key: 'education', label: '教育背景', defaultFontSize: 11.9, defaultLineHeight: 1.56 },
+  { key: 'work', label: '工作经历', defaultFontSize: 11.9, defaultLineHeight: 1.56 },
+  { key: 'project', label: '项目经历', defaultFontSize: 11.9, defaultLineHeight: 1.56 },
+  { key: 'campus', label: '校园经历', defaultFontSize: 11.9, defaultLineHeight: 1.56 },
+  { key: 'award', label: '获奖经历', defaultFontSize: 11.9, defaultLineHeight: 1.56 },
+  { key: 'skills', label: '专业技能', defaultFontSize: 11.9, defaultLineHeight: 1.58 },
+];
+
+function toNumber(value: unknown): number | undefined {
+  const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  return Number.isFinite(numeric) ? numeric : undefined;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
 
 function normalizeResume(resume: ResumeVO): ResumeVO {
   return {
@@ -19,6 +38,7 @@ function normalizeResume(resume: ResumeVO): ResumeVO {
     campusList: resume.campusList || [],
     awardList: resume.awardList || [],
     skillList: resume.skillList || [],
+    resumeStyle: resume.resumeStyle || {},
   };
 }
 
@@ -30,7 +50,7 @@ function createEmptyItem(key: ResumeListKey): Record<string, string> {
     return { company: '', department: '', position: '', startDate: '', endDate: '', description: '' };
   }
   if (key === 'projectList') {
-    return { name: '', role: '', startDate: '', endDate: '', description: '' };
+    return { name: '', role: '', techStack: '', links: '', startDate: '', endDate: '', description: '' };
   }
   return { name: '', level: '', description: '' };
 }
@@ -73,6 +93,40 @@ function TextAreaField(props: {
         rows={props.rows || 4}
         onChange={(event) => props.onChange(event.target.value)}
       />
+    </label>
+  );
+}
+
+function NumberField(props: {
+  id: string;
+  label: string;
+  value?: number;
+  min: number;
+  max: number;
+  step: number;
+  suffix?: string;
+  onChange: (value: number | undefined) => void;
+}) {
+  const value = typeof props.value === 'number' ? props.value : '';
+
+  return (
+    <label className="resume-editor-field resume-editor-number-field" htmlFor={props.id}>
+      <span>{props.label}</span>
+      <div className="resume-editor-number-control">
+        <input
+          id={props.id}
+          type="number"
+          value={value}
+          min={props.min}
+          max={props.max}
+          step={props.step}
+          onChange={(event) => {
+            const numeric = Number(event.target.value);
+            props.onChange(Number.isFinite(numeric) ? clampNumber(numeric, props.min, props.max) : undefined);
+          }}
+        />
+        {props.suffix && <small>{props.suffix}</small>}
+      </div>
     </label>
   );
 }
@@ -124,6 +178,36 @@ export function ResumeEditorPanel({ resume, onChange }: ResumeEditorPanelProps) 
     onChange({ ...current, summary: value });
   };
 
+  const updateResumeStyle = (nextStyle: ResumeStyle) => {
+    onChange({ ...current, resumeStyle: nextStyle });
+  };
+
+  const updatePageMargin = (field: 'pageMarginX' | 'pageMarginY', value: number | undefined) => {
+    updateResumeStyle({
+      ...(current.resumeStyle || {}),
+      [field]: value,
+    });
+  };
+
+  const updateSectionStyle = (
+    sectionKey: ResumeStyleSectionKey,
+    field: 'fontSize' | 'lineHeight',
+    value: number | undefined,
+  ) => {
+    const currentStyle = current.resumeStyle || {};
+    const currentSections = currentStyle.sections || {};
+    updateResumeStyle({
+      ...currentStyle,
+      sections: {
+        ...currentSections,
+        [sectionKey]: {
+          ...(currentSections[sectionKey] || {}),
+          [field]: value,
+        },
+      },
+    });
+  };
+
   const addListItem = (key: ResumeListKey) => {
     const list = [...((current[key] || []) as Array<Record<string, string | undefined>>), createEmptyItem(key)];
     onChange({ ...current, [key]: list } as ResumeVO);
@@ -165,7 +249,72 @@ export function ResumeEditorPanel({ resume, onChange }: ResumeEditorPanelProps) 
         </div>
       </Section>
 
-      <Section title="个人总结" icon={<Sparkles size={16} />}>
+      <Section title="排版设置" icon={<Type size={16} />}>
+        <div className="resume-editor-layout-grid">
+          <NumberField
+            id="resume-margin-x"
+            label="左右页边距"
+            value={toNumber(current.resumeStyle?.pageMarginX)}
+            min={24}
+            max={72}
+            step={1}
+            suffix="px"
+            onChange={(value) => updatePageMargin('pageMarginX', value)}
+          />
+          <NumberField
+            id="resume-margin-y"
+            label="上下页边距"
+            value={toNumber(current.resumeStyle?.pageMarginY)}
+            min={24}
+            max={72}
+            step={1}
+            suffix="px"
+            onChange={(value) => updatePageMargin('pageMarginY', value)}
+          />
+        </div>
+        <div className="resume-editor-style-list">
+          {STYLE_SECTION_CONTROLS.map((control) => {
+            const sectionStyle = current.resumeStyle?.sections?.[control.key] || {};
+            return (
+              <div className="resume-editor-style-row" key={control.key}>
+                <span className="resume-editor-style-label">{control.label}</span>
+                <NumberField
+                  id={`resume-${control.key}-font-size`}
+                  label="字号"
+                  value={toNumber(sectionStyle.fontSize) ?? control.defaultFontSize}
+                  min={10}
+                  max={18}
+                  step={0.1}
+                  suffix="px"
+                  onChange={(value) => updateSectionStyle(control.key, 'fontSize', value)}
+                />
+                <NumberField
+                  id={`resume-${control.key}-line-height`}
+                  label="行距"
+                  value={toNumber(sectionStyle.lineHeight) ?? control.defaultLineHeight}
+                  min={1.1}
+                  max={2.4}
+                  step={0.05}
+                  suffix="倍"
+                  onChange={(value) => updateSectionStyle(control.key, 'lineHeight', value)}
+                />
+              </div>
+            );
+          })}
+        </div>
+      </Section>
+
+      <Section
+        title="个人总结"
+        icon={<Sparkles size={16} />}
+        action={
+          current.summary ? (
+            <button type="button" className="resume-editor-add resume-editor-remove" onClick={() => updateSummary('')}>
+              <Trash2 size={14} />删除
+            </button>
+          ) : null
+        }
+      >
         <TextAreaField
           id="resume-summary"
           label="总结"
@@ -241,6 +390,8 @@ export function ResumeEditorPanel({ resume, onChange }: ResumeEditorPanelProps) 
             <div className="resume-editor-grid">
               <Field id={`project-name-${index}`} label="项目名称" value={item.name} onChange={(value) => updateListItem('projectList', index, 'name', value)} />
               <Field id={`project-role-${index}`} label="角色" value={item.role} onChange={(value) => updateListItem('projectList', index, 'role', value)} />
+              <Field id={`project-tech-stack-${index}`} label="技术栈" value={item.techStack} onChange={(value) => updateListItem('projectList', index, 'techStack', value)} />
+              <Field id={`project-links-${index}`} label="项目地址" value={item.links} onChange={(value) => updateListItem('projectList', index, 'links', value)} />
               <Field id={`project-start-${index}`} label="开始时间" value={item.startDate} onChange={(value) => updateListItem('projectList', index, 'startDate', value)} />
               <Field id={`project-end-${index}`} label="结束时间" value={item.endDate} onChange={(value) => updateListItem('projectList', index, 'endDate', value)} />
               <TextAreaField id={`project-description-${index}`} label="项目描述" value={item.description} rows={4} onChange={(value) => updateListItem('projectList', index, 'description', value)} />
