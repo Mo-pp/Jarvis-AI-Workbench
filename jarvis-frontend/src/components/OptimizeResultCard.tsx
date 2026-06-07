@@ -84,8 +84,8 @@ export function OptimizeResultCard({ result }: OptimizeResultCardProps) {
         <div className="resume-evaluation-status-card">
           <LoaderCircle size={16} className="spin" />
           <div>
-            <strong>评分中</strong>
-            <span>简历已可预览、编辑和导出，评分完成后会自动更新。</span>
+            <strong>后台评分中</strong>
+            <span>简历已生成，预览、编辑和导出不需要等待评分完成。</span>
           </div>
         </div>
       )}

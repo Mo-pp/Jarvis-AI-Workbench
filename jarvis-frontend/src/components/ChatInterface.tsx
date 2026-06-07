@@ -157,6 +157,13 @@ type AssistantDelegationGroup = {
   children: AssistantTimelineAction[];
 };
 type AssistantTimelineItem = AssistantTimelineAction | AssistantActionGroup | AssistantDelegationGroup;
+type AssistantActivityPhase = 'thinking' | 'writing' | 'tool' | 'scoring' | 'failed';
+type AssistantActivityState = {
+  phase: AssistantActivityPhase;
+  status: 'running' | 'pending' | 'failed';
+  label: string;
+  detail?: string;
+};
 
 const DEFAULT_WALLPAPER_URL = 'https://images.unsplash.com/photo-1517685352821-92cf88aee5a5?w=1920&q=80';
 const WALLPAPER_STORAGE_KEY = 'jarvis.wallpaper';
@@ -1160,6 +1167,10 @@ function getRunStepBrief(payload: RunStepPayload): string {
       : `${payload.agentLabel || name} 处理中`;
   }
 
+  if (normalizedName.includes('evaluateresume') || normalizedName.includes('resumeevaluation')) {
+    return payload.status === 'success' ? '后台评分已启动' : '启动后台评分';
+  }
+
   if (normalizedName.includes('edit') || normalizedName.includes('write')) {
     return payload.status === 'success' ? `编辑完成：${name}` : `正在编辑：${name}`;
   }
@@ -1283,6 +1294,124 @@ function buildAssistantTimeline(actions?: AssistantActionItem[]): AssistantTimel
   });
 
   return timeline;
+}
+
+function isActiveEvaluationJob(job?: ResumeEvaluationPendingPayload): boolean {
+  return Boolean(job && (job.status === 'pending' || job.status === 'running'));
+}
+
+function hasAssistantVisibleOutput(message: ChatMessage): boolean {
+  return Boolean(
+    message.content?.trim() ||
+    message.actions?.length ||
+    message.resumeData ||
+    message.optimizeResult ||
+    message.questionnaire ||
+    message.markdownArtifact ||
+    message.mindmap ||
+    message.questionTrace ||
+    message.answerTrace,
+  );
+}
+
+function getLatestActiveAction(actions?: AssistantActionItem[]): AssistantActionItem | null {
+  if (!actions?.length) return null;
+
+  for (let index = actions.length - 1; index >= 0; index -= 1) {
+    const action = actions[index];
+    if (action.kind === 'tool_use' && (action.status === 'running' || action.status === 'pending')) {
+      return action;
+    }
+    if (action.kind === 'delegation' && (action.status === 'running' || action.status === 'pending')) {
+      return action;
+    }
+    if (action.kind === 'user_question') {
+      return action;
+    }
+  }
+
+  return null;
+}
+
+function getAssistantActivityState(message: ChatMessage): AssistantActivityState | null {
+  if (message.role !== 'assistant') return null;
+
+  const evaluationJob = message.optimizeResult?.evaluationJob;
+  if (isActiveEvaluationJob(evaluationJob) && !message.optimizeResult?.evaluation) {
+    return {
+      phase: 'scoring',
+      status: evaluationJob?.status === 'pending' ? 'pending' : 'running',
+      label: '后台评分中',
+      detail: '简历已生成，可继续预览、编辑和导出。',
+    };
+  }
+
+  if (evaluationJob?.status === 'failed' && !message.optimizeResult?.evaluation) {
+    return {
+      phase: 'failed',
+      status: 'failed',
+      label: '评分失败',
+      detail: evaluationJob.errorMessage || '可稍后重试。',
+    };
+  }
+
+  const activeAction = getLatestActiveAction(message.actions);
+  if (activeAction?.kind === 'tool_use') {
+    const toolName = activeAction.toolName.toLowerCase();
+    const isEvaluationTool = toolName.includes('evaluateresume') || toolName.includes('resumeevaluation');
+    return {
+      phase: 'tool',
+      status: activeAction.status === 'pending' ? 'pending' : 'running',
+      label: isEvaluationTool ? '启动后台评分' : activeAction.status === 'pending' ? '等待工具' : '使用工具',
+      detail: activeAction.title || activeAction.summary || activeAction.description || activeAction.toolName,
+    };
+  }
+
+  if (activeAction?.kind === 'delegation') {
+    return {
+      phase: 'tool',
+      status: activeAction.status === 'pending' ? 'pending' : 'running',
+      label: activeAction.status === 'pending' ? '等待子 Agent' : '子 Agent 运行中',
+      detail: activeAction.title || activeAction.task || activeAction.agentLabel,
+    };
+  }
+
+  if (activeAction?.kind === 'user_question') {
+    return {
+      phase: 'tool',
+      status: 'pending',
+      label: '等待补充信息',
+      detail: activeAction.title,
+    };
+  }
+
+  if (message.isStreaming && message.content?.trim()) {
+    return {
+      phase: 'writing',
+      status: 'running',
+      label: '正在写入回复',
+      detail: '输出内容会持续更新。',
+    };
+  }
+
+  if ((message.thinking?.status === 'running' || message.isStreaming) && !hasAssistantVisibleOutput(message)) {
+    return {
+      phase: 'thinking',
+      status: 'running',
+      label: 'Thinking...',
+      detail: '正在组织下一步输出。',
+    };
+  }
+
+  if (message.thinking?.status === 'failed' && !message.content?.trim()) {
+    return {
+      phase: 'failed',
+      status: 'failed',
+      label: '请求失败',
+    };
+  }
+
+  return null;
 }
 
 function formatElapsedTime(milliseconds: number): string {
@@ -3241,6 +3370,7 @@ export function ChatInterface() {
       content: '',
       timestamp: new Date(),
       isStreaming: true,
+      thinking: currentThinkingMode ? { status: 'running' } : undefined,
     };
     setSessionMessages(targetSessionId, (prev) => [...prev, aiMessagePlaceholder]);
     setStreamingMessageId(aiMessageId);
@@ -3279,6 +3409,7 @@ export function ChatInterface() {
                     ...message,
                     content: displayContent,
                     isStreaming: false,
+                    thinking: undefined,
                     mindmap: mindmap || undefined,
                     resumeData: artifacts?.resume,
                     optimizeResult: artifacts?.optimizeResult,
@@ -3341,7 +3472,7 @@ export function ChatInterface() {
         setSessionMessages(targetSessionId, (prev) =>
           prev.map((item) =>
             item.id === aiMessageId
-              ? { ...item, content: message, isStreaming: false, thinking: { status: 'failed' } }
+              ? { ...item, content: message, isStreaming: false, thinking: undefined }
               : item,
           ),
         );
@@ -3411,11 +3542,10 @@ export function ChatInterface() {
 
       onThinkingDone: (payload: ThinkingDonePayload) => {
         if (!isVisibleSession(targetSessionId)) return;
-        const status = payload.status === 'failed' ? 'failed' : 'success';
         setSessionMessages(targetSessionId, (prev) =>
           prev.map((message) =>
             message.id === aiMessageId
-              ? { ...message, thinking: { status } }
+              ? { ...message, thinking: payload.status === 'failed' ? { status: 'failed' } : undefined }
               : message,
           ),
         );
@@ -3430,6 +3560,7 @@ export function ChatInterface() {
               ? {
                   ...message,
                   content: streamingDisplayContent || fullText,
+                  thinking: undefined,
                 }
               : message,
           ),
@@ -4525,6 +4656,33 @@ export function ChatInterface() {
   const renderMessageContent = (message: ChatMessage) => {
     const inlineRunSteps = renderInlineRunSteps(message.runSteps);
     const assistantActions = renderAssistantActions(message);
+    const activityState = getAssistantActivityState(message);
+    const renderAssistantActivity = () => {
+      if (!activityState) return null;
+
+      const icon = activityState.phase === 'thinking'
+        ? <Brain size={13} />
+        : activityState.phase === 'writing'
+          ? <Pencil size={13} />
+          : activityState.phase === 'scoring'
+            ? <ListChecks size={13} />
+            : activityState.phase === 'failed'
+              ? <X size={13} />
+              : <Database size={13} />;
+      const shouldSpin = activityState.status === 'running' && activityState.phase !== 'writing';
+
+      return (
+        <div className={`message-activity phase-${activityState.phase} status-${activityState.status}`} aria-live="polite">
+          <span className="message-activity-icon">
+            {shouldSpin ? <LoaderCircle size={13} className="spin" /> : icon}
+          </span>
+          <span className="message-activity-label">{activityState.label}</span>
+          {activityState.detail && (
+            <span className="message-activity-detail">{activityState.detail}</span>
+          )}
+        </div>
+      );
+    };
     const renderMessageAttachments = () => {
       if (!message.attachments?.length) return null;
       const images = message.attachments.filter(isImageAttachment);
@@ -4628,16 +4786,7 @@ export function ChatInterface() {
 
     return (
       <>
-        {message.thinking && message.thinking.status !== 'failed' && (
-          <div className={`message-thinking status-${message.thinking.status}`}>
-            {message.thinking.status === 'running' ? (
-              <LoaderCircle size={13} className="spin" />
-            ) : (
-              <Check size={13} />
-            )}
-            <span>{message.thinking.status === 'running' ? 'Thinking...' : '已完成思考'}</span>
-          </div>
-        )}
+        {renderAssistantActivity()}
         {assistantActions}
         {renderMessageAttachments()}
         {message.content && <p className="message-content-text">{message.content}</p>}

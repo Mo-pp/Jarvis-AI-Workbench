@@ -855,6 +855,79 @@ body {
   color: rgba(4, 120, 87, 0.82);
 }
 
+.message-activity {
+  display: inline-grid;
+  grid-template-columns: 18px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  max-width: min(100%, 620px);
+  min-height: 30px;
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(241, 245, 249, 0.82);
+  color: rgba(51, 65, 85, 0.9);
+  font-size: 12.5px;
+  line-height: 1.25;
+}
+
+.message-activity-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: currentColor;
+}
+
+.message-activity-label {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.message-activity-detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(71, 85, 105, 0.72);
+}
+
+.message-activity.phase-thinking,
+.message-activity.phase-writing {
+  border-color: rgba(96, 165, 250, 0.26);
+  background: rgba(219, 234, 254, 0.62);
+  color: rgba(37, 99, 235, 0.9);
+}
+
+.message-activity.phase-tool {
+  border-color: rgba(14, 165, 233, 0.28);
+  background: rgba(224, 242, 254, 0.66);
+  color: rgba(3, 105, 161, 0.92);
+}
+
+.message-activity.phase-scoring {
+  border-color: rgba(34, 197, 94, 0.28);
+  background: rgba(236, 253, 245, 0.72);
+  color: rgba(4, 120, 87, 0.92);
+}
+
+.message-activity.phase-failed {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(254, 242, 242, 0.82);
+  color: rgba(185, 28, 28, 0.92);
+}
+
+.message-activity.phase-thinking .message-activity-detail,
+.message-activity.phase-writing .message-activity-detail,
+.message-activity.phase-tool .message-activity-detail,
+.message-activity.phase-scoring .message-activity-detail,
+.message-activity.phase-failed .message-activity-detail {
+  color: currentColor;
+  opacity: 0.72;
+}
+
 .message-attachment-stack {
   display: grid;
   gap: 8px;
