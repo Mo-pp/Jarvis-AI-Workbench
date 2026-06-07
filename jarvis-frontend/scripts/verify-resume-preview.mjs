@@ -38,7 +38,7 @@ try {
         role: '独立全栈开发',
         techStack: 'Spring Boot、LangGraph4j、MyBatis-Plus、MySQL、Redis、RabbitMQ、JWT',
         links: 'GitHub：https://github.com/Mo-pp/Jarvis-AI-Workbench ｜ 在线演示：http://47.121.194.181/',
-        description: '模块亮点：  保留双空格\n  缩进换行规整',
+        description: '黑点生成：不应出现黑点前缀\n模块亮点：  保留双空格\n  缩进换行规整',
       },
     ],
     campusList: [],
@@ -47,7 +47,7 @@ try {
       {
         name: '缓存与中间件',
         level: '熟悉',
-        description: 'Redis：  缓存治理\n  RabbitMQ：异步解耦',
+        description: '熟悉 Redis：  缓存治理\n  RabbitMQ：异步解耦',
       },
     ],
   };
@@ -75,9 +75,12 @@ try {
   assert.match(previewText, /项目地址：/);
   assert.match(previewText, /GitHub：https:\/\/github\.com\/Mo-pp\/Jarvis-AI-Workbench/);
   assert.match(previewText, /在线演示：http:\/\/47\.121\.194\.181\//);
+  assert.match(previewText, /生成：不应出现黑点前缀/);
+  assert.doesNotMatch(previewText, /黑点生成/);
   assert.match(previewText, /模块亮点： 保留双空格/);
   assert.match(previewText, /缩进换行规整/);
   assert.match(previewText, /Redis： 缓存治理 RabbitMQ：异步解耦/);
+  assert.doesNotMatch(previewText, /熟悉\s*熟悉/);
   assert.doesNotMatch(previewText, / {2,}/);
 
   const editorWithSummaryHtml = renderToStaticMarkup(

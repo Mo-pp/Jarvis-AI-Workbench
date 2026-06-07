@@ -630,6 +630,47 @@ function normalizeJdMatchEvaluation(value: unknown): JdMatchEvaluation | undefin
   };
 }
 
+function hasTextValue(value?: string): boolean {
+  return Boolean(value?.trim());
+}
+
+function hasEvaluationContent(value?: ResumeQualityEvaluation | JdMatchEvaluation): boolean {
+  if (!value) return false;
+  const dimensionScores = 'dimensionScores' in value && value.dimensionScores
+    ? Object.keys(value.dimensionScores).length
+    : 0;
+
+  return Boolean(
+    hasTextValue(value.summary) ||
+    dimensionScores > 0 ||
+    ('strengths' in value && Boolean(value.strengths?.length)) ||
+    ('issues' in value && Boolean(value.issues?.length)) ||
+    Boolean(value.suggestions?.length) ||
+    ('matchedSkills' in value && Boolean(value.matchedSkills?.length)) ||
+    ('missingRequirements' in value && Boolean(value.missingRequirements?.length)) ||
+    ('bonusItems' in value && Boolean(value.bonusItems?.length))
+  );
+}
+
+function isPlaceholderEvaluation(bundle: ResumeEvaluationBundle): boolean {
+  const sections = [
+    bundle.quality,
+    bundle.originalResume,
+    bundle.generatedResume,
+    bundle.jdMatch,
+  ].filter(Boolean);
+
+  if (sections.length === 0) return true;
+  const hasAnyContent = sections.some((section) => hasEvaluationContent(section));
+  if (hasAnyContent) return false;
+
+  const scores = sections
+    .map((section) => section?.score)
+    .filter((score): score is number => typeof score === 'number');
+
+  return scores.length > 0 && scores.every((score) => score === 0);
+}
+
 function normalizeResumeEvaluationBundle(value: unknown): ResumeEvaluationBundle | undefined {
   if (!isRecord(value)) return undefined;
   const quality = normalizeQualityEvaluation(value.quality);
@@ -637,7 +678,7 @@ function normalizeResumeEvaluationBundle(value: unknown): ResumeEvaluationBundle
   const generatedResume = normalizeQualityEvaluation(value.generatedResume);
   const jdMatch = normalizeJdMatchEvaluation(value.jdMatch);
   if (!quality && !originalResume && !generatedResume && !jdMatch) return undefined;
-  return {
+  const bundle = {
     quality,
     originalResume,
     generatedResume,
@@ -645,6 +686,7 @@ function normalizeResumeEvaluationBundle(value: unknown): ResumeEvaluationBundle
     hasJd: typeof value.hasJd === 'boolean' ? value.hasJd : Boolean(jdMatch),
     targetPosition: typeof value.targetPosition === 'string' ? value.targetPosition : undefined,
   };
+  return isPlaceholderEvaluation(bundle) ? undefined : bundle;
 }
 
 function normalizeEvaluationJobStatus(value: unknown): ResumeEvaluationPendingPayload['status'] {
@@ -1300,6 +1342,14 @@ function isActiveEvaluationJob(job?: ResumeEvaluationPendingPayload): boolean {
   return Boolean(job && (job.status === 'pending' || job.status === 'running'));
 }
 
+function shouldBackfillEvaluation(result?: OptimizeResult): boolean {
+  return Boolean(result && !result.evaluation);
+}
+
+function isEvaluationStatusTerminal(status?: string): boolean {
+  return status === 'success' || status === 'failed';
+}
+
 function hasAssistantVisibleOutput(message: ChatMessage): boolean {
   return Boolean(
     message.content?.trim() ||
@@ -1337,7 +1387,7 @@ function getAssistantActivityState(message: ChatMessage): AssistantActivityState
   if (message.role !== 'assistant') return null;
 
   const evaluationJob = message.optimizeResult?.evaluationJob;
-  if (isActiveEvaluationJob(evaluationJob) && !message.optimizeResult?.evaluation) {
+  if (isActiveEvaluationJob(evaluationJob)) {
     return {
       phase: 'scoring',
       status: evaluationJob?.status === 'pending' ? 'pending' : 'running',
@@ -2274,10 +2324,16 @@ export function ChatInterface() {
       );
     }
 
-    if (target.workbenchTabId) {
+    const candidateWorkbenchTabIds = [
+      target.workbenchTabId,
+      target.messageId ? `resume-${target.messageId}` : undefined,
+      target.messageId ? `optimize-${target.messageId}` : undefined,
+    ].filter((id): id is string => Boolean(id));
+
+    if (candidateWorkbenchTabIds.length) {
       setWorkbenchTabs((currentTabs) =>
         currentTabs.map((tab) => {
-          if (tab.id !== target.workbenchTabId) return tab;
+          if (!candidateWorkbenchTabIds.includes(tab.id)) return tab;
           if (tab.type === 'resume') {
             return {
               ...tab,
@@ -2326,6 +2382,95 @@ export function ChatInterface() {
     }, 2500);
     evaluationPollingTimersRef.current.set(job.jobId, timerId);
   }, [applyEvaluationStatus]);
+
+  const restoreEvaluationStatusForSession = useCallback(async (
+    targetSessionId: string,
+    targetMessages?: ChatMessage[],
+  ) => {
+    if (!targetSessionId) return;
+    const sourceMessages = targetMessages || messagesBySession[targetSessionId] || [];
+    const candidates = sourceMessages
+      .filter((message) => message.role === 'assistant' && shouldBackfillEvaluation(message.optimizeResult));
+    if (!candidates.length) return;
+
+    const jobCandidates = candidates.filter((message) => Boolean(message.optimizeResult?.evaluationJob?.jobId));
+    const fallbackCandidate = [...candidates]
+      .reverse()
+      .find((message) => !message.optimizeResult?.evaluationJob?.jobId);
+    const targets = Array.from(new Map(
+      (fallbackCandidate ? [...jobCandidates, fallbackCandidate] : jobCandidates)
+        .map((message) => [message.id, message]),
+    ).values());
+
+    await Promise.all(targets.map(async (targetMessage) => {
+      const job = targetMessage.optimizeResult?.evaluationJob;
+      try {
+        const status = job?.jobId
+          ? await resumeEvaluationService.getStatus(job.jobId)
+          : await resumeEvaluationService.getLatestStatusBySession(targetSessionId);
+
+        if (!isEvaluationStatusTerminal(status.status)) {
+          setSessionMessages(targetSessionId, (prev) =>
+            prev.map((message) =>
+              message.id === targetMessage.id
+                ? {
+                    ...message,
+                    optimizeResult: updateOptimizeResultWithStatus(message.optimizeResult, status),
+                  }
+                : message,
+            ),
+          );
+          startEvaluationPolling({
+            jobId: status.jobId,
+            status: status.status,
+            statusUrl: job?.statusUrl,
+            errorMessage: status.errorMessage,
+          }, {
+            sessionId: targetSessionId,
+            messageId: targetMessage.id,
+          });
+          return;
+        }
+
+        setSessionMessages(targetSessionId, (prev) =>
+          prev.map((message) =>
+            message.id === targetMessage.id
+              ? {
+                  ...message,
+                  optimizeResult: updateOptimizeResultWithStatus(message.optimizeResult, status),
+                }
+              : message,
+          ),
+        );
+
+        const resumeTabId = `resume-${targetMessage.id}`;
+        const optimizeTabId = `optimize-${targetMessage.id}`;
+        setWorkbenchTabs((currentTabs) =>
+          currentTabs.map((tab) => {
+            if (tab.id === resumeTabId && tab.type === 'resume' && shouldBackfillEvaluation(tab.optimizeResult)) {
+              return {
+                ...tab,
+                optimizeResult: updateOptimizeResultWithStatus(tab.optimizeResult, status),
+              };
+            }
+            if (tab.id === optimizeTabId && tab.type === 'optimize_result' && shouldBackfillEvaluation(tab.result)) {
+              const result = updateOptimizeResultWithStatus(tab.result, status);
+              return {
+                ...tab,
+                result,
+                title: status.result ? getOptimizeTabTitle(result) : tab.title,
+              };
+            }
+            return tab;
+          }),
+        );
+      } catch (error) {
+        if (job?.jobId) {
+          console.warn('恢复简历评分状态失败:', error);
+        }
+      }
+    }));
+  }, [messagesBySession, setSessionMessages, startEvaluationPolling, updateOptimizeResultWithStatus]);
 
   const pendingEvaluationJobKey = messages
     .map((message) => {
@@ -2737,6 +2882,7 @@ export function ChatInterface() {
         setRestoreSessionId(null);
         if (chatMessages.length === 0) return;
         setSessionMessages(sessionId, chatMessages);
+        void restoreEvaluationStatusForSession(sessionId, chatMessages);
         setIsChatMode(true);
       })
       .catch((error) => {
@@ -2747,7 +2893,7 @@ export function ChatInterface() {
         }
         setRestoreSessionId(null);
       });
-  }, [authChecked, clearPersistedSessionId, currentUser, isHistoryLoading, messages.length, persistSessionId, restoreSessionId, sessionId, setSessionMessages]);
+  }, [authChecked, clearPersistedSessionId, currentUser, isHistoryLoading, messages.length, persistSessionId, restoreEvaluationStatusForSession, restoreSessionId, sessionId, setSessionMessages]);
 
   useEffect(() => {
     if (!isChatMode) return;
@@ -3001,6 +3147,7 @@ export function ChatInterface() {
 
       persistSessionId(selectedSessionId);
       setSessionMessages(selectedSessionId, chatMessages);
+      void restoreEvaluationStatusForSession(selectedSessionId, chatMessages);
       setIsChatMode(chatMessages.length > 0);
       setPendingQuestion(null);
       setPendingQuestions([]);

@@ -74,6 +74,22 @@ function normalizeInlineWhitespace(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeResumeLine(value: string) {
+  return normalizeInlineWhitespace(value)
+    .replace(/^黑点(?:[：:\s]+|(?=[\u4e00-\u9fa5A-Za-z0-9]))/, '')
+    .trim();
+}
+
+function normalizeSkillDescription(description: string, level?: string) {
+  let normalized = normalizeResumeLine(description);
+  const normalizedLevel = normalizeInlineWhitespace(level || '');
+  if (!normalized || !normalizedLevel) return normalized;
+
+  const escapedLevel = escapeRegExp(normalizedLevel);
+  normalized = normalized.replace(new RegExp(`^${escapedLevel}(?:[：:、，,。；;\\s]+|(?=[\\u4e00-\\u9fa5A-Za-z0-9]))`), '').trim();
+  return normalized;
+}
+
 function toFiniteNumber(value: unknown) {
   const numeric = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
   return Number.isFinite(numeric) ? numeric : undefined;
@@ -93,7 +109,7 @@ function hasAnyTextValue(value: unknown): boolean {
 function splitLines(value?: string) {
   return (typeof value === 'string' ? value : '')
     .split(/\r?\n|；|;/)
-    .map((line) => normalizeInlineWhitespace(line.replace(/^[\t ]*[·•*-]\s*/, '')))
+    .map((line) => normalizeResumeLine(line.replace(/^[\t ]*[·•*-]\s*/, '')))
     .filter(Boolean);
 }
 
@@ -543,7 +559,7 @@ export function ResumePreview({
           <div className="resume-preview-skills">
             {visibleSkills.map((skill: Skill, index) => {
               const label = [text(skill.name), text(skill.level)].filter(Boolean).join(' · ');
-              const description = normalizeInlineWhitespace(skill.description || '');
+              const description = normalizeSkillDescription(skill.description || '', skill.level);
               return (
                 <span key={`${label}-${index}`} className="resume-preview-skill">
                   {label && <strong>{renderInlineText(label)}</strong>}

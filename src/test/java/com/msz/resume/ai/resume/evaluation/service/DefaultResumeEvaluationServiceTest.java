@@ -13,6 +13,7 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -132,15 +133,49 @@ class DefaultResumeEvaluationServiceTest {
         assertTrue(error.getMessage().contains("LLM 评分失败"));
     }
 
+    @Test
+    @DisplayName("评分 service 使用 OpenAI 模型时显式关闭 reasoning effort")
+    void evaluationShouldDisableReasoningEffortForOpenAiProvider() {
+        FakeChatModel chatModel = new FakeChatModel("""
+                {
+                  "originalResume": {"score": 61, "summary": "原始简历一般"},
+                  "generatedResume": {"score": 82, "summary": "预览简历较好"},
+                  "quality": {"score": 82, "summary": "预览简历较好"},
+                  "hasJd": false
+                }
+                """, ModelProvider.OPEN_AI);
+        DefaultResumeEvaluationService service = new DefaultResumeEvaluationService(
+                chatModel,
+                new ObjectMapper()
+        );
+
+        service.evaluateWithoutJdStrict(ResumeEvaluationRequest.builder()
+                .originalResumeText("本科 Java 后端，做过缓存优化。")
+                .generatedResume(ResumeVO.builder().summary("通过缓存优化将接口延迟降低 30%。").build())
+                .build());
+
+        assertInstanceOf(OpenAiChatRequestParameters.class, chatModel.lastRequest.parameters());
+        OpenAiChatRequestParameters parameters = (OpenAiChatRequestParameters) chatModel.lastRequest.parameters();
+        assertEquals("none", parameters.reasoningEffort());
+    }
+
     static class FakeChatModel implements ChatModel {
         private final String response;
+        private final ModelProvider provider;
+        private ChatRequest lastRequest;
 
         FakeChatModel(String response) {
+            this(response, ModelProvider.OTHER);
+        }
+
+        FakeChatModel(String response, ModelProvider provider) {
             this.response = response;
+            this.provider = provider;
         }
 
         @Override
         public ChatResponse doChat(ChatRequest chatRequest) {
+            this.lastRequest = chatRequest;
             return ChatResponse.builder()
                     .aiMessage(AiMessage.from(response))
                     .build();
@@ -148,6 +183,11 @@ class DefaultResumeEvaluationServiceTest {
 
         @Override
         public ChatRequestParameters defaultRequestParameters() {
+            if (provider == ModelProvider.OPEN_AI) {
+                return OpenAiChatRequestParameters.builder()
+                        .reasoningEffort("high")
+                        .build();
+            }
             return ChatRequestParameters.builder().build();
         }
 
@@ -163,7 +203,7 @@ class DefaultResumeEvaluationServiceTest {
 
         @Override
         public ModelProvider provider() {
-            return ModelProvider.OTHER;
+            return provider;
         }
     }
 

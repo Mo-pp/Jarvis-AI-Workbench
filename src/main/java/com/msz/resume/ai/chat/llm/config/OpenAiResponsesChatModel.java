@@ -27,7 +27,6 @@ import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.listener.ChatModelListener;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.request.ChatRequestParameters;
-import dev.langchain4j.model.chat.request.DefaultChatRequestParameters;
 import dev.langchain4j.model.chat.request.ResponseFormat;
 import dev.langchain4j.model.chat.request.ResponseFormatType;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
@@ -191,11 +190,12 @@ class OpenAiResponsesChatModel implements ChatModel {
         this.store = getOrDefault(builder.store, false);
         this.strict = getOrDefault(builder.strict, true);
         this.listeners = copy(builder.listeners);
-        this.defaultRequestParameters = DefaultChatRequestParameters.builder()
+        this.defaultRequestParameters = OpenAiChatRequestParameters.builder()
                 .modelName(modelName)
                 .temperature(temperature)
                 .topP(topP)
                 .maxOutputTokens(maxOutputTokens)
+                .reasoningEffort(reasoningEffort)
                 .build();
     }
 

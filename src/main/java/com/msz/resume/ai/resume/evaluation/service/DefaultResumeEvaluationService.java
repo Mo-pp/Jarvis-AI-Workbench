@@ -11,9 +11,11 @@ import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationRequest;
 import com.msz.resume.ai.resume.evaluation.dto.ResumeQualityEvaluation;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
+import dev.langchain4j.model.ModelProvider;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -32,6 +34,11 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
     private static final int JD_WEIGHT = 45;
     private static final int MAX_TEXT_CHARS = 18_000;
     private static final int MAX_GENERATED_JSON_CHARS = 18_000;
+    private static final String EVALUATION_REASONING_EFFORT = "none";
+    private static final OpenAiChatRequestParameters EVALUATION_REQUEST_PARAMETERS =
+            OpenAiChatRequestParameters.builder()
+                    .reasoningEffort(EVALUATION_REASONING_EFFORT)
+                    .build();
 
     private final ChatModel chatModel;
     private final ObjectMapper objectMapper;
@@ -132,12 +139,7 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
     private ResumeEvaluationBundle evaluate(ResumeEvaluationRequest request, boolean withJd, boolean failOnLlmError) {
         try {
             String prompt = buildEvaluationPrompt(request, withJd);
-            ChatResponse response = chatModel.chat(ChatRequest.builder()
-                    .messages(List.of(
-                            SystemMessage.from(systemPrompt()),
-                            UserMessage.from(prompt)
-                    ))
-                    .build());
+            ChatResponse response = chatModel.chat(buildEvaluationChatRequest(prompt));
             String text = response.aiMessage() != null ? response.aiMessage().text() : null;
             ResumeEvaluationBundle parsed = parseBundle(text, withJd);
             return normalizeBundle(parsed, request, withJd);
@@ -148,6 +150,18 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
             log.warn("[ResumeEvaluationService] LLM 评分失败，使用规则评分兜底: {}", e.getMessage());
             return fallbackBundle(request, withJd);
         }
+    }
+
+    private ChatRequest buildEvaluationChatRequest(String prompt) {
+        ChatRequest.Builder builder = ChatRequest.builder()
+                .messages(List.of(
+                        SystemMessage.from(systemPrompt()),
+                        UserMessage.from(prompt)
+                ));
+        if (chatModel.provider() == ModelProvider.OPEN_AI) {
+            builder.parameters(EVALUATION_REQUEST_PARAMETERS);
+        }
+        return builder.build();
     }
 
     private String systemPrompt() {

@@ -114,8 +114,9 @@ public class ResumeOptimizeGuideTool {
 
             #### 6. 一页简历约束
             默认把 optimizedResume 控制为 A4 单页友好的内容密度；普通经历每段保留 2-4 个最高价值 bullet，优先删除重复、空泛、低技术含量描述。
+            project.description / work.description / campus.description 中的多条要点必须用换行拆开，让前端渲染成简历小圆点；优先使用 `· 小标题：内容` 或直接 `小标题：内容`，不要把多个亮点挤在一个长段落里。
             bullet 推荐写成 `模块亮点：基于 xxx，采用 xxx，实现 xxx，提升/降低 xxx%`，让前端模板能把冒号前小标题高亮。
-            如果原文 bullet 使用 `· 小标题：内容`，可以保留这种黑点 + 小标题结构；多个短信息可以并列写在项目元信息行，不要拆出大量留白。
+            如果原文 bullet 使用 `· 小标题：内容`，可以保留项目符号 `·` + 小标题结构；严禁输出“黑点”两个字作为 bullet 文案或小标题。
             对关键技术、核心指标、延迟/成本/命中率/采纳率等重点使用 `**...**` 标记，便于前端模板加粗。
             如果候选人内容确实很强且无法压缩到 1 页，在发布 2 页版本前必须调用 AskUserQuestionTool 询问用户是否允许；未获确认时继续压缩为 1 页。
 
@@ -125,6 +126,7 @@ public class ResumeOptimizeGuideTool {
             - sections.summary/education/work/project/campus/award/skills：可分别设置 fontSize 和 lineHeight。
             - 内容过密时先精简低价值文字，再适当降低对应分区字号或行距；不要用过小字号掩盖冗长简历。
             - 技能描述多个要点使用换行符分隔，便于前端按行展示。
+            - 技能 level 字段已经表达掌握程度，skill.description 不要再以“精通/熟练/熟悉/了解”等掌握程度开头，避免预览中出现重复。
 
             ### 输出格式
             - 如果用户的目标是“优化简历”“生成优化结果到工作台”“顺便给我可编辑的优化版本”，优先产出 workbench artifact，而不是先给冗长 prose。

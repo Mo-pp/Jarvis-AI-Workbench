@@ -370,6 +370,13 @@ export const resumeEvaluationService = {
     });
     return response.data as ResumeEvaluationStatusResponse;
   },
+
+  getLatestStatusBySession: async (sessionId: string): Promise<ResumeEvaluationStatusResponse> => {
+    const response = await resumeEvaluationApi.get<ResumeEvaluationStatusResponse>('/status', {
+      params: { sessionId },
+    });
+    return response.data as ResumeEvaluationStatusResponse;
+  },
 };
 
 export default api;

@@ -5,8 +5,11 @@ interface OptimizeResultCardProps {
   result: OptimizeResult;
 }
 
-function scoreValue(score?: number) {
-  if (typeof score !== 'number' || Number.isNaN(score)) return 0;
+function hasScore(score?: number): score is number {
+  return typeof score === 'number' && !Number.isNaN(score);
+}
+
+function scoreValue(score: number) {
   return Math.min(Math.max(Math.round(score), 0), 100);
 }
 
@@ -24,16 +27,44 @@ function ResultList(props: { title: string; items?: string[] }) {
   );
 }
 
-function ScoreTile(props: { title: string; score?: number; icon: React.ReactNode; summary?: string }) {
-  const score = scoreValue(props.score);
+function ScoreTile(props: {
+  title: string;
+  score?: number;
+  icon: React.ReactNode;
+  summary?: string;
+  loading?: boolean;
+  failed?: boolean;
+}) {
+  const rawScore = props.score;
+  const canShowScore = hasScore(rawScore);
+  const tileState = props.loading
+    ? 'loading'
+    : !canShowScore && props.failed
+      ? 'failed'
+      : '';
+
   return (
-    <div className="resume-evaluation-score-tile">
+    <div className={`resume-evaluation-score-tile ${tileState}`}>
       <div className="resume-evaluation-score-label">
         {props.icon}
         <span>{props.title}</span>
       </div>
-      <strong>{score}<small>/100</small></strong>
-      {props.summary && <p>{props.summary}</p>}
+      {props.loading ? (
+        <div className="resume-evaluation-score-loading" aria-label={`${props.title}评分中`}>
+          <span>
+            <LoaderCircle size={14} className="spin" />
+            <em>评分中</em>
+          </span>
+          <i aria-hidden="true" />
+        </div>
+      ) : canShowScore ? (
+        <strong>{scoreValue(rawScore)}<small>/100</small></strong>
+      ) : props.failed ? (
+        <strong className="resume-evaluation-score-placeholder">失败</strong>
+      ) : (
+        <strong className="resume-evaluation-score-placeholder">--<small>/100</small></strong>
+      )}
+      {props.summary ? <p>{props.summary}</p> : props.loading ? <p>正在后台计算分数。</p> : null}
     </div>
   );
 }
@@ -75,7 +106,7 @@ export function OptimizeResultCard({ result }: OptimizeResultCardProps) {
   const jdMatch = getJdMatch(result);
   const hasJdMatch = Boolean(result.evaluation?.hasJd && jdMatch) || (!result.evaluation && Boolean(jdMatch));
   const evaluationJob = result.evaluationJob;
-  const isEvaluating = Boolean(evaluationJob && !result.evaluation && ['pending', 'running'].includes(evaluationJob.status));
+  const isEvaluating = Boolean(evaluationJob && ['pending', 'running'].includes(evaluationJob.status));
   const evaluationFailed = Boolean(evaluationJob?.status === 'failed' && !result.evaluation);
 
   return (
@@ -104,12 +135,16 @@ export function OptimizeResultCard({ result }: OptimizeResultCardProps) {
           score={originalQuality?.score}
           summary={originalQuality?.summary}
           icon={<FileText size={15} />}
+          loading={isEvaluating}
+          failed={evaluationFailed}
         />
         <ScoreTile
           title="Jarvis 预览"
           score={generatedQuality?.score}
           summary={generatedQuality?.summary}
           icon={<Wand2 size={15} />}
+          loading={isEvaluating}
+          failed={evaluationFailed}
         />
         {hasJdMatch && (
           <ScoreTile
@@ -117,6 +152,8 @@ export function OptimizeResultCard({ result }: OptimizeResultCardProps) {
             score={jdMatch?.score}
             summary={jdMatch?.summary}
             icon={<Target size={15} />}
+            loading={isEvaluating}
+            failed={evaluationFailed}
           />
         )}
       </div>
