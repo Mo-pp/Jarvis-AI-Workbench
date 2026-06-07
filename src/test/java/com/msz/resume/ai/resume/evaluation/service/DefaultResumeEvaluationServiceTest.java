@@ -116,6 +116,22 @@ class DefaultResumeEvaluationServiceTest {
         assertNotNull(cards.getFirst().getEvaluation().getJdMatch());
     }
 
+    @Test
+    @DisplayName("strict 评分在 LLM 失败时抛出异常供异步任务写入 failed")
+    void strictEvaluationShouldThrowWhenLlmFails() {
+        DefaultResumeEvaluationService service = new DefaultResumeEvaluationService(
+                new FailingChatModel(),
+                new ObjectMapper()
+        );
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, () ->
+                service.evaluateWithoutJdStrict(ResumeEvaluationRequest.builder()
+                        .originalResumeText("Java 后端")
+                        .build()));
+
+        assertTrue(error.getMessage().contains("LLM 评分失败"));
+    }
+
     static class FakeChatModel implements ChatModel {
         private final String response;
 
@@ -128,6 +144,33 @@ class DefaultResumeEvaluationServiceTest {
             return ChatResponse.builder()
                     .aiMessage(AiMessage.from(response))
                     .build();
+        }
+
+        @Override
+        public ChatRequestParameters defaultRequestParameters() {
+            return ChatRequestParameters.builder().build();
+        }
+
+        @Override
+        public List<dev.langchain4j.model.chat.listener.ChatModelListener> listeners() {
+            return List.of();
+        }
+
+        @Override
+        public Set<Capability> supportedCapabilities() {
+            return Set.of();
+        }
+
+        @Override
+        public ModelProvider provider() {
+            return ModelProvider.OTHER;
+        }
+    }
+
+    static class FailingChatModel implements ChatModel {
+        @Override
+        public ChatResponse doChat(ChatRequest chatRequest) {
+            throw new IllegalStateException("LLM timeout");
         }
 
         @Override

@@ -22,7 +22,8 @@ import javax.sql.DataSource;
 @Configuration
 @MapperScan({
         "com.msz.resume.ai.chat.session.mapper",
-        "com.msz.resume.ai.auth.mapper"
+        "com.msz.resume.ai.auth.mapper",
+        "com.msz.resume.ai.resume.evaluation.mapper"
 })
 public class MyBatisPlusConfig {
 

@@ -254,6 +254,7 @@ public class ExecuteToolNode implements AsyncNodeAction<QueryLoopState> {
         stateUpdate.put(QueryLoopState.TRACE_AGENT_ID, currentState.getTraceAgentId());
         stateUpdate.put(QueryLoopState.TRACE_AGENT_LABEL, currentState.getTraceAgentLabel());
         stateUpdate.put(QueryLoopState.TRACE_AGENT_SCOPE, currentState.getTraceAgentScope());
+        stateUpdate.put(QueryLoopState.REASONING_EFFORT, currentState.getReasoningEffort());
 
         // 如果有新发现的工具，更新 DISCOVERED_TOOLS
         if (result != null && !result.discoveredTools().equals(currentState.getDiscoveredTools())) {

@@ -13,5 +13,13 @@ public interface ResumeEvaluationService {
 
     ResumeEvaluationBundle evaluateWithJd(ResumeEvaluationRequest request);
 
+    default ResumeEvaluationBundle evaluateWithoutJdStrict(ResumeEvaluationRequest request) {
+        return evaluateWithoutJd(request);
+    }
+
+    default ResumeEvaluationBundle evaluateWithJdStrict(ResumeEvaluationRequest request) {
+        return evaluateWithJd(request);
+    }
+
     List<CandidateResumeEvaluationCard> evaluateBatchWithJd(BatchResumeEvaluationRequest request);
 }

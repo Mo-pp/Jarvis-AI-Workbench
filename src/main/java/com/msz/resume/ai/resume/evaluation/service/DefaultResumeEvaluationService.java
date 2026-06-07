@@ -44,7 +44,16 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
     @Override
     public ResumeEvaluationBundle evaluateWithoutJd(ResumeEvaluationRequest request) {
         ResumeEvaluationRequest normalized = normalizeRequest(request);
-        ResumeEvaluationBundle bundle = evaluate(normalized, false);
+        ResumeEvaluationBundle bundle = evaluate(normalized, false, false);
+        bundle.setJdMatch(null);
+        bundle.setHasJd(false);
+        return bundle;
+    }
+
+    @Override
+    public ResumeEvaluationBundle evaluateWithoutJdStrict(ResumeEvaluationRequest request) {
+        ResumeEvaluationRequest normalized = normalizeRequest(request);
+        ResumeEvaluationBundle bundle = evaluate(normalized, false, true);
         bundle.setJdMatch(null);
         bundle.setHasJd(false);
         return bundle;
@@ -56,7 +65,23 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
         if (!hasText(normalized.getJobDescription())) {
             throw new IllegalArgumentException("JD 不能为空");
         }
-        ResumeEvaluationBundle bundle = evaluate(normalized, true);
+        ResumeEvaluationBundle bundle = evaluate(normalized, true, false);
+        applyJdMetadata(bundle);
+        return bundle;
+    }
+
+    @Override
+    public ResumeEvaluationBundle evaluateWithJdStrict(ResumeEvaluationRequest request) {
+        ResumeEvaluationRequest normalized = normalizeRequest(request);
+        if (!hasText(normalized.getJobDescription())) {
+            throw new IllegalArgumentException("JD 不能为空");
+        }
+        ResumeEvaluationBundle bundle = evaluate(normalized, true, true);
+        applyJdMetadata(bundle);
+        return bundle;
+    }
+
+    private void applyJdMetadata(ResumeEvaluationBundle bundle) {
         bundle.setHasJd(true);
         if (bundle.getGeneratedResume() != null) {
             bundle.getGeneratedResume().setJdWeight(JD_WEIGHT);
@@ -67,7 +92,6 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
         if (bundle.getQuality() != null) {
             bundle.getQuality().setJdWeight(JD_WEIGHT);
         }
-        return bundle;
     }
 
     @Override
@@ -105,7 +129,7 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
         return cards;
     }
 
-    private ResumeEvaluationBundle evaluate(ResumeEvaluationRequest request, boolean withJd) {
+    private ResumeEvaluationBundle evaluate(ResumeEvaluationRequest request, boolean withJd, boolean failOnLlmError) {
         try {
             String prompt = buildEvaluationPrompt(request, withJd);
             ChatResponse response = chatModel.chat(ChatRequest.builder()
@@ -118,6 +142,9 @@ public class DefaultResumeEvaluationService implements ResumeEvaluationService {
             ResumeEvaluationBundle parsed = parseBundle(text, withJd);
             return normalizeBundle(parsed, request, withJd);
         } catch (Exception e) {
+            if (failOnLlmError) {
+                throw new IllegalStateException("LLM 评分失败: " + e.getMessage(), e);
+            }
             log.warn("[ResumeEvaluationService] LLM 评分失败，使用规则评分兜底: {}", e.getMessage());
             return fallbackBundle(request, withJd);
         }

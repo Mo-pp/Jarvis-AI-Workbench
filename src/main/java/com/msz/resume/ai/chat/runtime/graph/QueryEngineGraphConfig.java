@@ -63,6 +63,7 @@ public class QueryEngineGraphConfig {
                     Map<String, Object> innerInput = new HashMap<>();
                     innerInput.put(QueryLoopState.MESSAGE_HISTORY, innerState.getMessages());
                     innerInput.put(QueryLoopState.USER_CONTEXT, sessionState.getUserContext());
+                    innerInput.put(QueryLoopState.REASONING_EFFORT, innerState.getReasoningEffort());
                     innerInput.put(QueryLoopState.OPENVIKING_IDENTITY, identity);
                     innerInput.put(QueryLoopState.SESSION_ID, sessionState.getSessionId());
                     innerInput.put(QueryLoopState.TASK_PLAN, innerState.getTaskPlan());

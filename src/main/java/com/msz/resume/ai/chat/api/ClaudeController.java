@@ -79,6 +79,8 @@ import java.util.concurrent.CompletableFuture;
 public class ClaudeController {
     private static final int MAX_IMAGE_ATTACHMENTS = 10;
     private static final long MAX_TOTAL_IMAGE_ATTACHMENT_BYTES = 25L * 1024L * 1024L;
+    private static final String THINKING_MODE_REASONING_EFFORT = "high";
+    private static final String NON_THINKING_MODE_REASONING_EFFORT = "none";
     /**
      * 注入编译好的外层图
      * 这是状态机的入口，通过它可以执行整个对话流程
@@ -153,6 +155,7 @@ public class ClaudeController {
             // ========== 1. 处理会话ID ==========
             // 如果前端没传sessionId，就生成一个新的
             String sessionId = request.getSessionId();
+            String reasoningEffort = resolveReasoningEffort(request);
             if (sessionId == null || sessionId.isBlank()) {
                 sessionId = UUID.randomUUID().toString();
                 log.info("[新会话] 生成sessionId: {}", sessionId);
@@ -204,6 +207,7 @@ public class ClaudeController {
             innerInput.put(QueryLoopState.TASK_PLAN, innerState.getTaskPlan());
             innerInput.put(QueryLoopState.SURFACED_OPENVIKING_URIS, innerState.getSurfacedOpenVikingUris());
             innerInput.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, innerState.getLlmContextCheckpoint());
+            innerInput.put(QueryLoopState.REASONING_EFFORT, reasoningEffort);
             innerInput.put(QueryLoopState.OPENVIKING_IDENTITY, identity);
             QueryLoopState newInnerState = new QueryLoopState(innerInput);
 
@@ -351,6 +355,8 @@ public class ClaudeController {
                                  @RequestParam String userMessage,
                                  @RequestParam(required = false) String language,
                                  @RequestParam(required = false) String outputStyle,
+                                 @RequestParam(required = false) Boolean thinkingMode,
+                                 @RequestParam(required = false) String reasoningEffort,
                                  @RequestParam(required = false) String fileId,
                                  HttpServletRequest httpServletRequest) {
         ChatRequest request = new ChatRequest();
@@ -358,6 +364,8 @@ public class ClaudeController {
         request.setUserMessage(userMessage);
         request.setLanguage(language);
         request.setOutputStyle(outputStyle);
+        request.setThinkingMode(thinkingMode);
+        request.setReasoningEffort(reasoningEffort);
         request.setFileId(fileId);
         return chatStreamInternal(request, httpServletRequest);
     }
@@ -381,6 +389,7 @@ public class ClaudeController {
         String userMessage = request.getUserMessage() != null ? request.getUserMessage() : "";
         String language = request.getLanguage();
         String outputStyle = request.getOutputStyle();
+        String reasoningEffort = resolveReasoningEffort(request);
         Account currentAccount = currentAccountResolver.requireCurrentAccount(httpServletRequest, "chat/stream");
         OpenVikingIdentity identity = openVikingIdentityResolver.resolve(currentAccount);
         UserProfile userContext = buildUserProfile(currentAccount, identity, language, outputStyle);
@@ -443,6 +452,7 @@ public class ClaudeController {
                 innerInput.put(QueryLoopState.TASK_PLAN, innerState.getTaskPlan());
                 innerInput.put(QueryLoopState.SURFACED_OPENVIKING_URIS, innerState.getSurfacedOpenVikingUris());
                 innerInput.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, innerState.getLlmContextCheckpoint());
+                innerInput.put(QueryLoopState.REASONING_EFFORT, reasoningEffort);
                 innerInput.put(QueryLoopState.OPENVIKING_IDENTITY, identity);
                 innerInput.put(QueryLoopState.TRACE_RUN_ID, runId);
                 innerInput.put(QueryLoopState.TRACE_AGENT_ID, innerState.getTraceAgentId());
@@ -1125,6 +1135,22 @@ public class ClaudeController {
                 .fileSize(parsedFile.getFileSize())
                 .available(available)
                 .build();
+    }
+
+    private String resolveReasoningEffort(ChatRequest request) {
+        if (request == null) {
+            return null;
+        }
+        String explicitEffort = request.getReasoningEffort();
+        if (explicitEffort != null && !explicitEffort.isBlank()) {
+            return explicitEffort.trim();
+        }
+        if (request.getThinkingMode() == null) {
+            return null;
+        }
+        return request.getThinkingMode()
+                ? THINKING_MODE_REASONING_EFFORT
+                : NON_THINKING_MODE_REASONING_EFFORT;
     }
 
     @SuppressWarnings("unchecked")

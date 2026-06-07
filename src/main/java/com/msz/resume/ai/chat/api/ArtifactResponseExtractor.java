@@ -30,6 +30,7 @@ final class ArtifactResponseExtractor {
             "resume",
             "optimize_result",
             "resume_evaluation",
+            "resume_evaluation_pending",
             "markdown"
     );
 
@@ -343,6 +344,7 @@ final class ArtifactResponseExtractor {
         // Resume-like artifacts still validate against the inner payload object.
         if ("resume".equals(type) || "optimize_result".equals(type)
                 || "resume_evaluation".equals(type)
+                || "resume_evaluation_pending".equals(type)
                 || "mindmap".equals(type) || "questionnaire".equals(type)
                 || "markdown".equals(type)) {
             return payload;
@@ -363,6 +365,8 @@ final class ArtifactResponseExtractor {
                     || node.path("originalResume").isObject()
                     || node.path("generatedResume").isObject()
                     || node.path("jdMatch").isObject();
+            case "resume_evaluation_pending" -> node.path("jobId").isTextual()
+                    && !node.path("jobId").asText("").isBlank();
             case "markdown" -> node.path("markdown").isTextual() && !node.path("markdown").asText().isBlank();
             default -> false;
         };

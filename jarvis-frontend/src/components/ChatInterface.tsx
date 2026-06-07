@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   ArrowUp,
   Bot,
+  Brain,
   Check,
   ChevronDown,
   ChevronUp,
@@ -36,7 +37,16 @@ import {
   UserCircle,
   X,
 } from 'lucide-react';
-import { ApiError, authService, chatService, fileService, getStoredAuth, resourceService, skillService } from '../services/api';
+import {
+  ApiError,
+  authService,
+  chatService,
+  fileService,
+  getStoredAuth,
+  resourceService,
+  resumeEvaluationService,
+  skillService,
+} from '../services/api';
 import { useChatStream } from '../hooks/useChatStream';
 import type {
   ArtifactEnvelope,
@@ -58,7 +68,9 @@ import type {
   ResourceItemResponse,
   ResumeVO,
   ResumeEvaluationBundle,
+  ResumeEvaluationPendingPayload,
   ResumeQualityEvaluation,
+  ResumeEvaluationStatusResponse,
   JdMatchEvaluation,
   RunStepKind,
   RunStepPayload,
@@ -148,6 +160,7 @@ type AssistantTimelineItem = AssistantTimelineAction | AssistantActionGroup | As
 
 const DEFAULT_WALLPAPER_URL = 'https://images.unsplash.com/photo-1517685352821-92cf88aee5a5?w=1920&q=80';
 const WALLPAPER_STORAGE_KEY = 'jarvis.wallpaper';
+const THINKING_MODE_STORAGE_KEY = 'jarvis.thinkingMode';
 const INTERVIEWER_DEMO_MARKDOWN: MarkdownArtifact = {
   type: 'markdown',
   title: '面试官 Demo',
@@ -627,6 +640,22 @@ function normalizeResumeEvaluationBundle(value: unknown): ResumeEvaluationBundle
   };
 }
 
+function normalizeEvaluationJobStatus(value: unknown): ResumeEvaluationPendingPayload['status'] {
+  return value === 'running' || value === 'success' || value === 'failed' ? value : 'pending';
+}
+
+function normalizeResumeEvaluationPendingPayload(value: unknown): ResumeEvaluationPendingPayload | undefined {
+  if (!isRecord(value)) return undefined;
+  const jobId = typeof value.jobId === 'string' ? value.jobId.trim() : '';
+  if (!jobId) return undefined;
+  return {
+    jobId,
+    status: normalizeEvaluationJobStatus(value.status),
+    statusUrl: typeof value.statusUrl === 'string' ? value.statusUrl : undefined,
+    errorMessage: typeof value.errorMessage === 'string' ? value.errorMessage : undefined,
+  };
+}
+
 function evaluationFromLegacyOptimizeResult(score: number | undefined, matchAnalysis: Record<string, unknown>): ResumeEvaluationBundle | undefined {
   if (typeof score !== 'number' && !isRecord(matchAnalysis)) return undefined;
   const jdMatch: JdMatchEvaluation = {
@@ -735,6 +764,14 @@ function normalizeStructuredPayload(payload: unknown, requireExplicitType = fals
         matchScore: evaluation.jdMatch?.score,
       };
     }
+  } else if (type === 'resume_evaluation_pending') {
+    const evaluationJob = normalizeResumeEvaluationPendingPayload(payload);
+    if (evaluationJob) {
+      artifacts.optimizeResult = {
+        type: 'optimize_result',
+        evaluationJob,
+      };
+    }
   } else if (type === 'questionnaire') {
     const questionnaire = normalizeQuestionnairePayload(payload);
     if (questionnaire) artifacts.questionnaire = questionnaire;
@@ -756,9 +793,26 @@ function mergeArtifacts(current: StructuredArtifacts | null, next: StructuredArt
   if (!next) return current;
   return {
     resume: next.resume || current.resume,
-    optimizeResult: next.optimizeResult || current.optimizeResult,
+    optimizeResult: mergeOptimizeResults(current.optimizeResult, next.optimizeResult),
     questionnaire: next.questionnaire || current.questionnaire,
     markdown: next.markdown || current.markdown,
+  };
+}
+
+function mergeOptimizeResults(current?: OptimizeResult, next?: OptimizeResult): OptimizeResult | undefined {
+  if (!current) return next;
+  if (!next) return current;
+  return {
+    ...current,
+    ...next,
+    matchAnalysis: next.matchAnalysis || current.matchAnalysis,
+    evaluation: next.evaluation || current.evaluation,
+    evaluationJob: next.evaluationJob || current.evaluationJob,
+    suggestions: next.suggestions?.length ? next.suggestions : current.suggestions,
+    highlights: next.highlights?.length ? next.highlights : current.highlights,
+    optimizedResume: next.optimizedResume || current.optimizedResume,
+    resume: next.resume || current.resume,
+    matchScore: typeof next.matchScore === 'number' ? next.matchScore : current.matchScore,
   };
 }
 
@@ -1834,6 +1888,11 @@ type MainAgentState = {
   endedAt: number | null;
   runId?: string;
 };
+type EvaluationJobTarget = {
+  sessionId: string;
+  messageId?: string;
+  workbenchTabId?: string;
+};
 type WorkbenchTabBase = {
   id: string;
   title: string;
@@ -1910,6 +1969,10 @@ export function ChatInterface() {
     if (typeof window === 'undefined') return null;
     return window.localStorage.getItem(WALLPAPER_STORAGE_KEY);
   });
+  const [thinkingModeEnabled, setThinkingModeEnabled] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.localStorage.getItem(THINKING_MODE_STORAGE_KEY) !== 'false';
+  });
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(() => getStoredAuth()?.user || null);
   const [authChecked, setAuthChecked] = useState(false);
   const [workbenchTabs, setWorkbenchTabs] = useState<WorkbenchTab[]>([]);
@@ -1949,12 +2012,18 @@ export function ChatInterface() {
   const sessionIdRef = useRef('');
   const attachedFilesRef = useRef<FileUploadResponse[]>([]);
   const sentMessagePreviewUrlsRef = useRef<Set<string>>(new Set());
+  const evaluationPollingTimersRef = useRef<Map<string, ReturnType<typeof window.setInterval>>>(new Map());
+  const evaluationJobTargetsRef = useRef<Map<string, EvaluationJobTarget>>(new Map());
   const { sendMessage: sendStreamMessage, disconnect } = useChatStream();
 
   const isLoading = loadingSessionIds.includes(sessionId);
   const messages = messagesBySession[sessionId] || [];
   const selectedExistingSkill = existingSkills.find((skill) => skill.id === selectedExistingSkillId) || existingSkills[0] || null;
   const selectedResource = resourceItems.find((item) => item.uri === selectedResourceUri) || resourceItems[0] || null;
+
+  useEffect(() => {
+    window.localStorage.setItem(THINKING_MODE_STORAGE_KEY, String(thinkingModeEnabled));
+  }, [thinkingModeEnabled]);
 
   useEffect(() => {
     attachedFilesRef.current = attachedFiles;
@@ -1967,6 +2036,11 @@ export function ChatInterface() {
         URL.revokeObjectURL(previewUrl);
       });
       sentMessagePreviewUrlsRef.current.clear();
+      evaluationPollingTimersRef.current.forEach((timerId) => {
+        window.clearInterval(timerId);
+      });
+      evaluationPollingTimersRef.current.clear();
+      evaluationJobTargetsRef.current.clear();
     };
   }, []);
 
@@ -2034,6 +2108,146 @@ export function ChatInterface() {
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
+
+  const updateOptimizeResultWithStatus = useCallback((
+    current: OptimizeResult | undefined,
+    status: ResumeEvaluationStatusResponse,
+  ): OptimizeResult => {
+    const currentJob = current?.evaluationJob;
+    return {
+      ...(current || { type: 'optimize_result' as const }),
+      type: 'optimize_result',
+      evaluation: status.result || current?.evaluation,
+      evaluationJob: {
+        jobId: status.jobId,
+        status: status.status,
+        statusUrl: currentJob?.statusUrl,
+        errorMessage: status.errorMessage,
+      },
+      matchScore: status.result?.jdMatch?.score ?? current?.matchScore,
+    };
+  }, []);
+
+  const applyEvaluationStatus = useCallback((status: ResumeEvaluationStatusResponse) => {
+    const target = evaluationJobTargetsRef.current.get(status.jobId);
+    if (!target) return;
+
+    if (target.messageId) {
+      setSessionMessages(target.sessionId, (prev) =>
+        prev.map((message) =>
+          message.id === target.messageId
+            ? {
+                ...message,
+                optimizeResult: updateOptimizeResultWithStatus(message.optimizeResult, status),
+              }
+            : message,
+        ),
+      );
+    }
+
+    if (target.workbenchTabId) {
+      setWorkbenchTabs((currentTabs) =>
+        currentTabs.map((tab) => {
+          if (tab.id !== target.workbenchTabId) return tab;
+          if (tab.type === 'resume') {
+            return {
+              ...tab,
+              optimizeResult: updateOptimizeResultWithStatus(tab.optimizeResult, status),
+            };
+          }
+          if (tab.type === 'optimize_result') {
+            return {
+              ...tab,
+              result: updateOptimizeResultWithStatus(tab.result, status),
+              title: status.result ? getOptimizeTabTitle(updateOptimizeResultWithStatus(tab.result, status)) : tab.title,
+            };
+          }
+          return tab;
+        }),
+      );
+    }
+
+    if (status.status === 'success' || status.status === 'failed') {
+      const timerId = evaluationPollingTimersRef.current.get(status.jobId);
+      if (timerId) {
+        window.clearInterval(timerId);
+        evaluationPollingTimersRef.current.delete(status.jobId);
+      }
+    }
+  }, [setSessionMessages, updateOptimizeResultWithStatus]);
+
+  const startEvaluationPolling = useCallback((job?: ResumeEvaluationPendingPayload, target?: EvaluationJobTarget) => {
+    if (!job?.jobId || !target) return;
+    evaluationJobTargetsRef.current.set(job.jobId, target);
+    if (job.status === 'success' || job.status === 'failed') return;
+    if (evaluationPollingTimersRef.current.has(job.jobId)) return;
+
+    const poll = async () => {
+      try {
+        const status = await resumeEvaluationService.getStatus(job.jobId);
+        applyEvaluationStatus(status);
+      } catch (error) {
+        console.warn('轮询简历评分状态失败:', error);
+      }
+    };
+
+    void poll();
+    const timerId = window.setInterval(() => {
+      void poll();
+    }, 2500);
+    evaluationPollingTimersRef.current.set(job.jobId, timerId);
+  }, [applyEvaluationStatus]);
+
+  const pendingEvaluationJobKey = messages
+    .map((message) => {
+      const job = message.optimizeResult?.evaluationJob;
+      if (message.role !== 'assistant' || !job || job.status === 'success' || job.status === 'failed') {
+        return '';
+      }
+      return `${message.id}:${job.jobId}:${job.status}`;
+    })
+    .filter(Boolean)
+    .join('|');
+  const workbenchEvaluationJobKey = workbenchTabs
+    .map((tab) => {
+      if (tab.type === 'resume') {
+        return `${tab.id}:${tab.optimizeResult?.evaluationJob?.jobId || ''}`;
+      }
+      if (tab.type === 'optimize_result') {
+        return `${tab.id}:${tab.result.evaluationJob?.jobId || ''}`;
+      }
+      return '';
+    })
+    .filter(Boolean)
+    .join('|');
+
+  useEffect(() => {
+    evaluationPollingTimersRef.current.forEach((timerId) => {
+      window.clearInterval(timerId);
+    });
+    evaluationPollingTimersRef.current.clear();
+    evaluationJobTargetsRef.current.clear();
+
+    messages.forEach((message) => {
+      const job = message.optimizeResult?.evaluationJob;
+      if (message.role !== 'assistant' || !job || job.status === 'success' || job.status === 'failed') {
+        return;
+      }
+      const resumeTabId = workbenchTabs.find((tab) =>
+        tab.type === 'resume' &&
+        tab.optimizeResult?.evaluationJob?.jobId === job.jobId
+      )?.id;
+      const optimizeTabId = workbenchTabs.find((tab) =>
+        tab.type === 'optimize_result' &&
+        tab.result.evaluationJob?.jobId === job.jobId
+      )?.id;
+      startEvaluationPolling(job, {
+        sessionId,
+        messageId: message.id,
+        workbenchTabId: resumeTabId || optimizeTabId,
+      });
+    });
+  }, [pendingEvaluationJobKey, sessionId, startEvaluationPolling, workbenchEvaluationJobKey]);
 
   const persistSessionId = useCallback((nextSessionId: string) => {
     if (!nextSessionId) return;
@@ -2988,6 +3202,7 @@ export function ChatInterface() {
     const currentFileId = currentDocument?.fileId;
     const currentImageFileIds = currentImageFiles.map((file) => file.fileId);
     const currentAttachmentIds = currentImageFileIds;
+    const currentThinkingMode = thinkingModeEnabled;
 
     const userMessage: ChatMessage = options?.displayMessage || {
       id: createClientId(),
@@ -3042,6 +3257,7 @@ export function ChatInterface() {
         envelopeArtifacts,
         questionnaire ? { questionnaire } : null,
       );
+      const evaluationJob = artifacts?.optimizeResult?.evaluationJob;
       const displayContent = getArtifactAwareDisplayContent(messageContent, artifacts, mindmap);
 
       if (isTargetVisible) {
@@ -3085,7 +3301,7 @@ export function ChatInterface() {
             tab.id === options.optimizeTabId && tab.type === 'resume'
               ? {
                   ...tab,
-                  optimizeResult: artifacts.optimizeResult || tab.optimizeResult,
+                  optimizeResult: mergeOptimizeResults(tab.optimizeResult, artifacts.optimizeResult),
                   resume: artifacts.resume ||
                     artifacts.optimizeResult?.optimizedResume ||
                     artifacts.optimizeResult?.resume ||
@@ -3098,6 +3314,20 @@ export function ChatInterface() {
         setIsWorkbenchOpen(true);
       } else if (isTargetVisible) {
         openArtifactsInWorkbench(artifacts, aiMessageId);
+      }
+      if (evaluationJob) {
+        const workbenchTabId = options?.optimizeTabId && (artifacts?.optimizeResult || artifacts?.resume)
+          ? options.optimizeTabId
+          : artifacts?.resume
+            ? `resume-${aiMessageId}`
+            : artifacts?.optimizeResult
+              ? `optimize-${aiMessageId}`
+              : undefined;
+        startEvaluationPolling(evaluationJob, {
+          sessionId: targetSessionId,
+          messageId: aiMessageId,
+          workbenchTabId: isTargetVisible ? workbenchTabId : undefined,
+        });
       }
       if (isTargetVisible) {
         setStreamingMessageId(null);
@@ -3130,6 +3360,7 @@ export function ChatInterface() {
         username: currentUser.username,
         language: 'zh-CN',
         outputStyle: 'concise',
+        thinkingMode: currentThinkingMode,
         fileId: currentFileId,
         imageFileIds: currentImageFileIds,
         attachmentIds: currentAttachmentIds,
@@ -3260,7 +3491,7 @@ export function ChatInterface() {
       onConnectionError: (error) => {
         handleRequestError(`连接中断：${error.message}`);
       },
-    }, currentFileId, currentUser.username, currentUser.username, 'zh-CN', 'concise', currentImageFileIds, currentAttachmentIds);
+    }, currentFileId, currentUser.username, currentUser.username, 'zh-CN', 'concise', currentThinkingMode, currentImageFileIds, currentAttachmentIds);
   }, [
     attachedFiles,
     currentUser,
@@ -3278,6 +3509,7 @@ export function ChatInterface() {
     setSessionLoading,
     sessionId,
     startMainAgentState,
+    thinkingModeEnabled,
     upsertArtifactReady,
     upsertAssistantAction,
     upsertAssistantCheckpoint,
@@ -4700,6 +4932,20 @@ export function ChatInterface() {
     );
   };
 
+  const renderThinkingModeToggle = () => (
+    <button
+      type="button"
+      className={`toolbar-icon-btn thinking-mode-toggle ${thinkingModeEnabled ? 'active' : ''}`}
+      title={thinkingModeEnabled ? '思考模式：开启' : '思考模式：关闭'}
+      aria-label={thinkingModeEnabled ? '关闭思考模式' : '开启思考模式'}
+      aria-pressed={thinkingModeEnabled}
+      onClick={() => setThinkingModeEnabled((enabled) => !enabled)}
+    >
+      <Brain size={17} />
+      <span className="thinking-toggle-dot" aria-hidden="true" />
+    </button>
+  );
+
   return (
     <div
       className={`app-container ${isWorkbenchVisible ? 'workbench-open' : ''}`}
@@ -4934,9 +5180,7 @@ export function ChatInterface() {
                     >
                       {isUploadingFile ? <LoaderCircle size={17} className="spin" /> : <Paperclip size={17} />}
                     </button>
-                    <button className="toolbar-icon-btn" title="联网搜索">
-                      <Globe size={17} />
-                    </button>
+                    {renderThinkingModeToggle()}
                   </div>
                   <div className="toolbar-right">
                     <span className="model-badge">
@@ -5197,9 +5441,7 @@ export function ChatInterface() {
                   >
                     {isUploadingFile ? <LoaderCircle size={17} className="spin" /> : <Paperclip size={17} />}
                   </button>
-                  <button className="toolbar-icon-btn" title="联网搜索">
-                    <Globe size={17} />
-                  </button>
+                  {renderThinkingModeToggle()}
                 </div>
                 <div className="toolbar-right">
                   <span className="model-badge">

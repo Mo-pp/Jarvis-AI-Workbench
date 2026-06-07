@@ -231,6 +231,7 @@ export function useChatStream() {
     username?: string,
     language?: string,
     outputStyle?: string,
+    thinkingMode?: boolean,
     imageFileIds?: string[],
     attachmentIds?: string[],
   ) => {
@@ -242,6 +243,7 @@ export function useChatStream() {
       username,
       language,
       outputStyle,
+      thinkingMode,
       fileId,
       imageFileIds,
       attachmentIds,

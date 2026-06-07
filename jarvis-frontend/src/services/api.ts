@@ -14,6 +14,7 @@ import type {
   ResourceDetailResponse,
   ResourceImportResultResponse,
   ResourceItemResponse,
+  ResumeEvaluationStatusResponse,
   Session,
   SkillUploadResponse,
   VerificationCodeType,
@@ -23,6 +24,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/claude';
 const AUTH_API_BASE_URL = import.meta.env.VITE_AUTH_API_URL || '/api/auth';
 const FILE_API_BASE_URL = import.meta.env.VITE_FILE_API_URL || '/api/files';
 const RESUME_EXPORT_API_BASE_URL = import.meta.env.VITE_RESUME_EXPORT_API_URL || '/api/resume/export';
+const RESUME_EVALUATION_API_BASE_URL = import.meta.env.VITE_RESUME_EVALUATION_API_URL || '/api/resume/evaluation';
 const SKILL_API_BASE_URL = import.meta.env.VITE_SKILL_API_URL || '/api/skills';
 const RESOURCE_API_BASE_URL = import.meta.env.VITE_RESOURCE_API_URL || '/api/resources';
 const AUTH_STORAGE_KEY = 'jarvis.auth';
@@ -147,17 +149,26 @@ const resumeExportApi = axios.create({
   },
 });
 
+const resumeEvaluationApi = axios.create({
+  baseURL: RESUME_EVALUATION_API_BASE_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
 api.interceptors.request.use(attachAuthorization);
 authApi.interceptors.request.use(attachAuthorization);
 fileApi.interceptors.request.use(attachAuthorization);
 skillApi.interceptors.request.use(attachAuthorization);
 resourceApi.interceptors.request.use(attachAuthorization);
 resumeExportApi.interceptors.request.use(attachAuthorization);
+resumeEvaluationApi.interceptors.request.use(attachAuthorization);
 api.interceptors.response.use(unwrapResponse, handleApiError);
 authApi.interceptors.response.use(unwrapResponse, handleApiError);
 fileApi.interceptors.response.use(unwrapResponse, handleApiError);
 skillApi.interceptors.response.use(unwrapResponse, handleApiError);
 resourceApi.interceptors.response.use(unwrapResponse, handleApiError);
+resumeEvaluationApi.interceptors.response.use(unwrapResponse, handleApiError);
 
 export const authService = {
   login: async (request: LoginRequest): Promise<AuthUser> => {
@@ -349,6 +360,15 @@ export const resumeExportService = {
       responseType: 'blob',
     });
     return response.data as Blob;
+  },
+};
+
+export const resumeEvaluationService = {
+  getStatus: async (jobId: string): Promise<ResumeEvaluationStatusResponse> => {
+    const response = await resumeEvaluationApi.get<ResumeEvaluationStatusResponse>('/status', {
+      params: { jobId },
+    });
+    return response.data as ResumeEvaluationStatusResponse;
   },
 };
 

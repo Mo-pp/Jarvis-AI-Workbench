@@ -603,6 +603,32 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.18);
 }
 
+.thinking-mode-toggle {
+  position: relative;
+}
+
+.thinking-mode-toggle.active {
+  background: rgba(130, 196, 255, 0.18);
+  color: rgba(225, 244, 255, 0.96);
+  border-color: rgba(130, 196, 255, 0.34);
+}
+
+.thinking-toggle-dot {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 0 1px rgba(8, 12, 20, 0.28);
+}
+
+.thinking-mode-toggle.active .thinking-toggle-dot {
+  background: #7dd3fc;
+  box-shadow: 0 0 8px rgba(125, 211, 252, 0.9);
+}
+
 .toolbar-right {
   display: flex;
   align-items: center;
@@ -3342,6 +3368,48 @@ body.workbench-resizing {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 10px;
+}
+
+.resume-evaluation-status-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  margin-bottom: 10px;
+  padding: 10px 11px;
+  border-radius: 8px;
+  border: 1px solid rgba(94, 234, 212, 0.22);
+  background: rgba(45, 212, 191, 0.1);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.resume-evaluation-status-card.failed {
+  border-color: rgba(248, 113, 113, 0.28);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.resume-evaluation-status-card svg {
+  flex-shrink: 0;
+}
+
+.resume-evaluation-status-card div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.resume-evaluation-status-card strong {
+  color: white;
+  font-size: 13px;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+.resume-evaluation-status-card span {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .resume-evaluation-score-tile {

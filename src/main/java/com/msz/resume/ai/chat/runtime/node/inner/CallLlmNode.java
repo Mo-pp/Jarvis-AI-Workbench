@@ -36,8 +36,10 @@ import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.request.ChatRequest;
+import dev.langchain4j.model.chat.request.ChatRequestParameters;
 import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import lombok.extern.slf4j.Slf4j;
 import org.bsc.langgraph4j.action.AsyncNodeAction;
 import org.springframework.stereotype.Component;
@@ -298,10 +300,15 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                 }
 
                 // 4. 构建请求：消息列表 + 工具规格
-                ChatRequest request = ChatRequest.builder()
-                        .messages(requestMessages)
-                        .toolSpecifications(toolSpecs)
-                        .build();
+                ChatRequest.Builder requestBuilder = ChatRequest.builder()
+                        .messages(requestMessages);
+                ChatRequestParameters requestParameters = buildRequestParameters(currentState.getReasoningEffort(), toolSpecs);
+                if (requestParameters != null) {
+                    requestBuilder.parameters(requestParameters);
+                } else {
+                    requestBuilder.toolSpecifications(toolSpecs);
+                }
+                ChatRequest request = requestBuilder.build();
 
                 // 5. 调用大模型，拿到回复
                 long llmStartMs = System.currentTimeMillis();
@@ -394,6 +401,7 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                 result.put(QueryLoopState.TRACE_AGENT_ID, currentState.getTraceAgentId());
                 result.put(QueryLoopState.TRACE_AGENT_LABEL, currentState.getTraceAgentLabel());
                 result.put(QueryLoopState.TRACE_AGENT_SCOPE, currentState.getTraceAgentScope());
+                result.put(QueryLoopState.REASONING_EFFORT, currentState.getReasoningEffort());
                 if (nextCheckpoint != null && nextCheckpoint.hasSummary()) {
                     result.put(QueryLoopState.LLM_CONTEXT_CHECKPOINT, nextCheckpoint);
                 }
@@ -422,6 +430,7 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                 errorResult.put(QueryLoopState.TRACE_AGENT_ID, currentState.getTraceAgentId());
                 errorResult.put(QueryLoopState.TRACE_AGENT_LABEL, currentState.getTraceAgentLabel());
                 errorResult.put(QueryLoopState.TRACE_AGENT_SCOPE, currentState.getTraceAgentScope());
+                errorResult.put(QueryLoopState.REASONING_EFFORT, currentState.getReasoningEffort());
                 errorResult.put(QueryLoopState.OPENVIKING_IDENTITY, identity);
                 return errorResult;
             }
@@ -534,6 +543,16 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
             throw new RuntimeException("Streaming chat returned empty response");
         }
         return response;
+    }
+
+    private ChatRequestParameters buildRequestParameters(String reasoningEffort, List<ToolSpecification> toolSpecs) {
+        if (reasoningEffort == null || reasoningEffort.isBlank()) {
+            return null;
+        }
+        return OpenAiChatRequestParameters.builder()
+                .reasoningEffort(reasoningEffort.trim())
+                .toolSpecifications(toolSpecs)
+                .build();
     }
 
     private void sendThinkingStarted(String sessionId) {

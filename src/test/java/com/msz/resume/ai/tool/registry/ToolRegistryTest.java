@@ -22,6 +22,8 @@ import com.msz.resume.ai.resume.evaluation.dto.BatchResumeEvaluationRequest;
 import com.msz.resume.ai.resume.evaluation.dto.CandidateResumeEvaluationCard;
 import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationBundle;
 import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationRequest;
+import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationAsyncService;
+import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationJobService;
 import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationService;
 import com.msz.resume.ai.chat.tooling.SpawnAgentTool;
 import com.msz.resume.ai.chat.tooling.TaskPlanTool;
@@ -293,7 +295,11 @@ class ToolRegistryTest {
                 new RememberUserPreferenceTool(new com.msz.resume.ai.integrations.openviking.core.service.OpenVikingMemoryService(openVikingClient)),
                 new ResumeGuideTool(),
                 new ResumeOptimizeGuideTool(),
-                new ResumeEvaluationTool(new FakeResumeEvaluationService(), new ObjectMapper()),
+                new ResumeEvaluationTool(
+                        org.mockito.Mockito.mock(ResumeEvaluationJobService.class),
+                        org.mockito.Mockito.mock(ResumeEvaluationAsyncService.class),
+                        new ObjectMapper()
+                ),
                 new ExpenseDemoTool()
         );
 

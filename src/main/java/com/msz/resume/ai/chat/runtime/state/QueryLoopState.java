@@ -130,6 +130,12 @@ public class QueryLoopState extends AgentState{
     public static final String USER_CONTEXT = "userContext"; // 用户上下文
 
     /**
+     * 本轮 LLM 请求的 reasoning effort 覆盖值。
+     * 为空时使用模型全局默认；有值时只影响当前用户请求触发的这一轮内层循环。
+     */
+    public static final String REASONING_EFFORT = "reasoningEffort";
+
+    /**
      * OpenViking 租户身份
      * 显式跟随内层图、工具执行和子 Agent 传递，避免依赖 ThreadLocal 跨异步线程。
      */
@@ -277,6 +283,7 @@ public class QueryLoopState extends AgentState{
             Map.entry(LOW_YIELD_COUNT, Channels.base(() -> 0)),
             Map.entry(LAST_OUTPUT_TOKEN_COUNT, Channels.base(() -> 0)),
             Map.entry(USER_CONTEXT, Channels.base(UserProfile::empty)),
+            Map.entry(REASONING_EFFORT, Channels.base(() -> "")),
             Map.entry(OPENVIKING_IDENTITY, Channels.base(OpenVikingIdentity::empty)),
             Map.entry(SURFACED_OPENVIKING_URIS, Channels.base(() -> new LinkedHashMap<String, String>())),
             Map.entry(DISCOVERED_TOOLS, Channels.base(() -> new LinkedHashSet<String>())),
@@ -383,6 +390,12 @@ public class QueryLoopState extends AgentState{
     /** 取当前用户画像上下文。 */
     public UserProfile getUserContext() {
         return this.<UserProfile>value(USER_CONTEXT).orElse(UserProfile.empty());
+    }
+
+    /** 取本轮 LLM 请求的推理强度覆盖值；没有覆盖时返回 null。 */
+    public String getReasoningEffort() {
+        String effort = this.<String>value(REASONING_EFFORT).orElse("");
+        return (effort != null && !effort.isBlank()) ? effort : null;
     }
 
     /** 取当前 OpenViking 身份；信息不完整时按无效身份处理。 */

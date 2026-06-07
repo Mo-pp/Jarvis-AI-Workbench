@@ -45,6 +45,18 @@ public class ChatRequest {
     private String outputStyle;
 
     /**
+     * 本轮是否开启思考模式。
+     * true 会请求更高 reasoning effort，false 会显式关闭/降低 reasoning effort。
+     */
+    private Boolean thinkingMode;
+
+    /**
+     * 本轮推理强度覆盖值（可选）。
+     * 前端默认只传 thinkingMode；该字段保留给调试或未来细粒度选择。
+     */
+    private String reasoningEffort;
+
+    /**
      * 关联的文件ID（可选）
      * 用户上传文件后，前端获得 fileId，在对话时传入
      * 后端会自动将文件内容注入到消息上下文中

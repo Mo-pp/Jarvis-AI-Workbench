@@ -33,6 +33,7 @@ import dev.langchain4j.model.chat.request.ResponseFormatType;
 import dev.langchain4j.model.chat.request.json.JsonObjectSchema;
 import dev.langchain4j.model.chat.request.json.JsonRawSchema;
 import dev.langchain4j.model.chat.response.ChatResponse;
+import dev.langchain4j.model.openai.OpenAiChatRequestParameters;
 import dev.langchain4j.model.openai.OpenAiChatResponseMetadata;
 import dev.langchain4j.model.openai.OpenAiTokenUsage;
 import dev.langchain4j.model.output.FinishReason;
@@ -301,9 +302,15 @@ class OpenAiResponsesChatModel implements ChatModel {
         if (promptCacheRetention != null && !promptCacheRetention.isBlank()) {
             payload.put(FIELD_PROMPT_CACHE_RETENTION, promptCacheRetention);
         }
-        if (reasoningEffort != null && !reasoningEffort.isBlank()) {
+        String requestReasoningEffort = parameters instanceof OpenAiChatRequestParameters openAiParameters
+                ? openAiParameters.reasoningEffort()
+                : null;
+        String effectiveReasoningEffort = requestReasoningEffort != null && !requestReasoningEffort.isBlank()
+                ? requestReasoningEffort
+                : reasoningEffort;
+        if (effectiveReasoningEffort != null && !effectiveReasoningEffort.isBlank()) {
             Map<String, Object> reasoning = new HashMap<>();
-            reasoning.put(FIELD_EFFORT, reasoningEffort);
+            reasoning.put(FIELD_EFFORT, effectiveReasoningEffort);
             payload.put(FIELD_REASONING, reasoning);
         }
 

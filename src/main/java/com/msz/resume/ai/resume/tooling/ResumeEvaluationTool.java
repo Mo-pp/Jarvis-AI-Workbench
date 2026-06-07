@@ -2,10 +2,12 @@ package com.msz.resume.ai.resume.tooling;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.msz.resume.ai.resume.dto.ResumeVO;
-import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationBundle;
 import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationRequest;
-import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationService;
+import com.msz.resume.ai.resume.evaluation.entity.ResumeEvaluationJob;
+import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationAsyncService;
+import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationJobService;
 import com.msz.resume.ai.tool.CoreTool;
+import com.msz.resume.ai.tool.ToolRuntimeContext;
 import dev.langchain4j.agent.tool.P;
 import dev.langchain4j.agent.tool.Tool;
 import lombok.extern.slf4j.Slf4j;
@@ -18,11 +20,15 @@ import java.util.Map;
 @Component
 public class ResumeEvaluationTool {
 
-    private final ResumeEvaluationService evaluationService;
+    private final ResumeEvaluationJobService jobService;
+    private final ResumeEvaluationAsyncService asyncService;
     private final ObjectMapper objectMapper;
 
-    public ResumeEvaluationTool(ResumeEvaluationService evaluationService, ObjectMapper objectMapper) {
-        this.evaluationService = evaluationService;
+    public ResumeEvaluationTool(ResumeEvaluationJobService jobService,
+                                ResumeEvaluationAsyncService asyncService,
+                                ObjectMapper objectMapper) {
+        this.jobService = jobService;
+        this.asyncService = asyncService;
         this.objectMapper = objectMapper;
     }
 
@@ -33,7 +39,7 @@ public class ResumeEvaluationTool {
             jobDescription is optional, targetPosition is optional.
             If jobDescription is blank or not explicitly available, this tool MUST NOT produce JD match scoring.
             If jobDescription is present, quality scoring includes JD relevance with fixed weight 45 and also returns jdMatch.
-            Return value is strict JSON payload for ResumeEvaluationBundle.
+            Return value is a pending evaluation job JSON. The real scoring runs in the background.
             """)
     public String evaluateResume(
             @P(value = "Original resume text extracted from the user input/file/image. Do not invent it.", required = false)
@@ -52,12 +58,26 @@ public class ResumeEvaluationTool {
                     .jobDescription(jobDescription)
                     .targetPosition(targetPosition)
                     .build();
-            ResumeEvaluationBundle bundle = hasText(jobDescription)
-                    ? evaluationService.evaluateWithJd(request)
-                    : evaluationService.evaluateWithoutJd(request);
+
+            ResumeEvaluationJob job = jobService.createPendingJob(
+                    ToolRuntimeContext.getSessionId(),
+                    ToolRuntimeContext.getRunId(),
+                    request
+            );
+            try {
+                asyncService.evaluateLater(job.getJobId(), request);
+            } catch (Exception e) {
+                jobService.markFailed(job.getJobId(), "schedule evaluation job failed: " + e.getMessage());
+                throw e;
+            }
+
             return objectMapper.writeValueAsString(Map.of(
-                    "type", "resume_evaluation",
-                    "payload", bundle
+                    "type", "resume_evaluation_pending",
+                    "payload", Map.of(
+                            "jobId", job.getJobId(),
+                            "status", "pending",
+                            "statusUrl", "/api/resume/evaluation/status?jobId=" + job.getJobId()
+                    )
             ));
         } catch (Exception e) {
             log.warn("[ResumeEvaluationTool] 评分失败: {}", e.getMessage());

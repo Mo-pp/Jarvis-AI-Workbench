@@ -1,4 +1,4 @@
-import { FileText, Sparkles, Target, Wand2 } from 'lucide-react';
+import { FileText, LoaderCircle, Sparkles, Target, Wand2, XCircle } from 'lucide-react';
 import type { JdMatchEvaluation, OptimizeResult, ResumeQualityEvaluation } from '../types';
 
 interface OptimizeResultCardProps {
@@ -74,9 +74,30 @@ export function OptimizeResultCard({ result }: OptimizeResultCardProps) {
   const generatedQuality = result.evaluation?.generatedResume || result.evaluation?.quality;
   const jdMatch = getJdMatch(result);
   const hasJdMatch = Boolean(result.evaluation?.hasJd && jdMatch) || (!result.evaluation && Boolean(jdMatch));
+  const evaluationJob = result.evaluationJob;
+  const isEvaluating = Boolean(evaluationJob && !result.evaluation && ['pending', 'running'].includes(evaluationJob.status));
+  const evaluationFailed = Boolean(evaluationJob?.status === 'failed' && !result.evaluation);
 
   return (
     <div className="optimize-result-card">
+      {isEvaluating && (
+        <div className="resume-evaluation-status-card">
+          <LoaderCircle size={16} className="spin" />
+          <div>
+            <strong>评分中</strong>
+            <span>简历已可预览、编辑和导出，评分完成后会自动更新。</span>
+          </div>
+        </div>
+      )}
+      {evaluationFailed && (
+        <div className="resume-evaluation-status-card failed">
+          <XCircle size={16} />
+          <div>
+            <strong>评分失败</strong>
+            <span>{evaluationJob?.errorMessage || '可稍后重试。'}</span>
+          </div>
+        </div>
+      )}
       <div className="resume-evaluation-score-grid">
         <ScoreTile
           title="原始简历"

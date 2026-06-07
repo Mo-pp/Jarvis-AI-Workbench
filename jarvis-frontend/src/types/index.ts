@@ -11,6 +11,8 @@ export interface ChatRequest {
   username?: string;
   language?: string;
   outputStyle?: string;
+  thinkingMode?: boolean;
+  reasoningEffort?: string;
   fileId?: string;
   imageFileIds?: string[];
   attachmentIds?: string[];
@@ -198,10 +200,20 @@ export interface OptimizeResult {
   matchScore?: number;
   matchAnalysis?: MatchAnalysis;
   evaluation?: ResumeEvaluationBundle;
+  evaluationJob?: ResumeEvaluationPendingPayload;
   suggestions?: string[];
   highlights?: string[];
   optimizedResume?: ResumeVO;
   resume?: ResumeVO;
+}
+
+export type ResumeEvaluationJobStatus = 'pending' | 'running' | 'success' | 'failed';
+
+export interface ResumeEvaluationPendingPayload {
+  jobId: string;
+  status: ResumeEvaluationJobStatus;
+  statusUrl?: string;
+  errorMessage?: string;
 }
 
 export interface MatchAnalysis {
@@ -238,6 +250,18 @@ export interface ResumeEvaluationBundle {
   jdMatch?: JdMatchEvaluation;
   hasJd?: boolean;
   targetPosition?: string;
+}
+
+export interface ResumeEvaluationStatusResponse {
+  jobId: string;
+  sessionId?: string;
+  runId?: string;
+  status: ResumeEvaluationJobStatus;
+  result?: ResumeEvaluationBundle;
+  errorMessage?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
 }
 
 export interface QuestionnaireArtifact {

@@ -212,6 +212,7 @@ public class ToolActionEventService {
             case "generateMindmap" -> "生成思维导图";
             case "getResumeGuide" -> "获取简历生成指南";
             case "getOptimizeGuide" -> "获取简历优化指南";
+            case "evaluateResume" -> "创建后台评分任务";
             case "openviking_skill_search" -> "检索 Skill";
             case "openviking_skill_read" -> "读取 Skill";
             case "openviking_skill_files" -> "查看 Skill 文件";
@@ -250,6 +251,7 @@ public class ToolActionEventService {
             case "openviking_forget" -> "openviking_forget";
             case "createPlan", "updateStatus", "addTask", "removeTask" -> "task_plan";
             case "getResumeGuide", "getOptimizeGuide", "publishArtifact" -> "artifact_work";
+            case "evaluateResume" -> "resume_evaluation";
             case "toolSearch" -> "tool_discovery";
             case "rememberUserPreference", "rememberUserMemory", "readUserMemory", "readUserMemoryDetail" -> "user_memory";
             case "searchExpensePolicy", "parseExpenseAttachment", "checkExpenseRules", "createExpenseDraft" -> "expense_demo";
@@ -269,6 +271,7 @@ public class ToolActionEventService {
             case "openviking_forget" -> "删除资源";
             case "task_plan" -> "维护执行计划";
             case "artifact_work" -> "准备工作台产物";
+            case "resume_evaluation" -> "后台简历评分";
             case "tool_discovery" -> "发现可用工具";
             case "user_memory" -> "处理用户记忆";
             case "expense_demo" -> "处理企业报销流程";
@@ -288,6 +291,7 @@ public class ToolActionEventService {
                 case "openviking_forget" -> "正在删除资源";
                 case "task_plan" -> "正在更新执行计划";
                 case "artifact_work" -> "正在准备产物";
+                case "resume_evaluation" -> "正在创建评分任务";
                 case "tool_discovery" -> "正在查找工具";
                 case "user_memory" -> "正在处理记忆";
                 case "expense_demo" -> "正在处理报销流程";
@@ -309,6 +313,7 @@ public class ToolActionEventService {
             case "openviking_forget" -> "资源已删除";
             case "task_plan" -> "执行计划已更新";
             case "artifact_work" -> "产物准备完成";
+            case "resume_evaluation" -> "评分任务已创建";
             case "tool_discovery" -> "工具发现完成";
             case "user_memory" -> "记忆处理完成";
             case "expense_demo" -> "报销流程处理完成";
@@ -326,6 +331,7 @@ public class ToolActionEventService {
             case "openviking_forget" -> stringValue(preview.get("uri"));
             case "createPlan", "updateStatus", "addTask", "removeTask" -> "task_plan";
             case "getResumeGuide", "getOptimizeGuide", "publishArtifact" -> "artifact_work";
+            case "evaluateResume" -> "resume_evaluation";
             case "toolSearch" -> stringValue(preview.get("toolName"));
             case "rememberUserPreference", "rememberUserMemory", "readUserMemory", "readUserMemoryDetail" -> "user_memory";
             case "searchExpensePolicy", "parseExpenseAttachment", "checkExpenseRules", "createExpenseDraft" -> "expense_demo";
@@ -361,6 +367,7 @@ public class ToolActionEventService {
             case "generateMindmap" -> "生成结构图";
             case "getResumeGuide" -> "获取结构化简历生成规则";
             case "getOptimizeGuide" -> "获取 JD 匹配与优化规则";
+            case "evaluateResume" -> "创建后台简历评分任务";
             case "rememberUserPreference" -> "写入偏好：" + fallback(stringValue(preview.get("preferenceKey")), "用户偏好");
             case "rememberUserMemory" -> "写入记忆：" + fallback(stringValue(preview.get("memoryKey")), "用户记忆");
             case "readUserMemory" -> "读取用户记忆";
@@ -557,6 +564,7 @@ public class ToolActionEventService {
             case "generateMindmap" -> "思维导图已生成";
             case "getResumeGuide" -> "简历生成指南已读取";
             case "getOptimizeGuide" -> "简历优化指南已读取";
+            case "evaluateResume" -> summarizeResumeEvaluationJob(normalized);
             case "rememberUserPreference" -> "用户偏好已记录";
             case "rememberUserMemory" -> "用户记忆已记录";
             case "readUserMemory" -> summarizeMemory(normalized, "用户记忆已读取");
@@ -678,6 +686,21 @@ public class ToolActionEventService {
             // Fall through.
         }
         return "工作台产物已发布";
+    }
+
+    /** 汇总异步简历评分任务创建结果。 */
+    private String summarizeResumeEvaluationJob(String result) {
+        try {
+            JsonNode root = objectMapper.readTree(result);
+            JsonNode payload = root.path("payload");
+            String jobId = payload.path("jobId").asText("");
+            if (!jobId.isBlank()) {
+                return "后台评分任务已创建：" + jobId;
+            }
+        } catch (Exception ignored) {
+            // Fall through.
+        }
+        return "后台评分任务已创建";
     }
 
     /** 汇总记忆读取结果，尽量提炼成数量信息。 */
