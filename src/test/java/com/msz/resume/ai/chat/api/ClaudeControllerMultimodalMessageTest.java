@@ -84,6 +84,9 @@ class ClaudeControllerMultimodalMessageTest {
         assertEquals(2, userMessage.contents().size());
         String text = ((TextContent) userMessage.contents().get(0)).text();
         assertTrue(text.contains("结合文件和截图分析"));
+        assertTrue(text.contains("- fileId: doc-1"));
+        assertTrue(text.contains("- fileName: resume.txt"));
+        assertTrue(text.contains("作为 sourceFileId 传入"));
         assertTrue(text.contains("文件内容（resume.txt）"));
         assertTrue(text.contains("简历正文"));
         assertInstanceOf(ImageContent.class, userMessage.contents().get(1));

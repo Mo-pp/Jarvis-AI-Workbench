@@ -41,6 +41,8 @@ class ResumeOptimizeGuideToolTest {
         assertTrue(guide.contains("optimizedResume 可以包含 resumeStyle"));
         assertTrue(guide.contains("sections.summary/education/work/project/campus/award/skills"));
         assertTrue(guide.contains("提高 evaluateResume 的简历质量评分和 JD 匹配评分"));
+        assertTrue(guide.contains("参数 sourceFileId 使用注入文件元信息里的 fileId"));
+        assertTrue(guide.contains("不要把上传文件全文复制到 originalResumeText"));
         assertTrue(guide.contains("原始简历里的项目地址、GitHub、在线演示"));
         assertTrue(guide.contains("必须写入 techStack"));
         assertTrue(guide.contains("默认不要新增 summary"));

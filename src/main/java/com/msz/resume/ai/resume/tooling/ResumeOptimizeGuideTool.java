@@ -133,7 +133,8 @@ public class ResumeOptimizeGuideTool {
             优先调用 publishArtifact，并传入结构化参数：type="optimize_result"，optimizeResult={...}。不要把完整 JSON 再包进字符串参数。
             - 如果你已经生成了优化后的完整简历，尽量把它放进 optimizedResume 字段，避免只给分析不给可落地结果。
             - publishArtifact 成功后本轮会结束；如果需要评分，应在同一批工具调用中先调用 publishArtifact 发布 optimize_result，再调用 evaluateResume。不要计划先等 evaluateResume 返回后再发布 optimize_result。
-            - 调用 evaluateResume 时生成新版 evaluation。参数 originalResumeText 使用用户原始简历提取文本，generatedResume 使用 optimizedResume 或当前工作台预览简历。
+            - 调用 evaluateResume 时生成新版 evaluation。若原始简历来自上传 PDF/Word/TXT/HTML 文件，参数 sourceFileId 使用注入文件元信息里的 fileId，generatedResume 使用 optimizedResume 或当前工作台预览简历；不要把上传文件全文复制到 originalResumeText。
+            - 只有用户直接粘贴简历文本且没有 sourceFileId 时，才把原始简历文本传给 evaluateResume.originalResumeText。
             - 只有用户明确提供 JD、岗位要求或当前优化请求包含 JD 时，才把 jobDescription 传给 evaluateResume 并生成 JD 匹配度；没有 JD 时必须走无 JD 简历评价链路，不要默认给 JD 匹配分。
             如果当前无法调用 publishArtifact，则最终只输出严格 JSON 对象本身。
             必须输出 JSON 格式，最外层固定为 {"type":"optimize_result", ...}，包含以下字段：

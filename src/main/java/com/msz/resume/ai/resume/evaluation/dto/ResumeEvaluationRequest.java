@@ -12,6 +12,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class ResumeEvaluationRequest {
 
+    private String sourceFileId;
+
     private String originalResumeText;
 
     private ResumeVO generatedResume;

@@ -80,7 +80,9 @@ public class ResumeGuideTool {
             - 导出不是删除、支付、覆盖数据等敏感操作，不需要二次确认。
             - publishArtifact 只负责把简历产物放到工作台，不负责 PDF 导出。PDF 下载由前端工作台内置按钮直接处理。
             - publishArtifact 成功后本轮会结束；如果需要评分，应在同一批工具调用中先调用 publishArtifact 发布 resume，再调用 evaluateResume。不要计划先等 evaluateResume 返回后再发布 resume。
-            - 调用 evaluateResume 时，对原始简历文本和 Jarvis 生成预览简历做评分；只有当前上下文明确包含 JD 或岗位要求时，才把 jobDescription 传给 evaluateResume，否则不要生成 JD 匹配度评分。
+            - 调用 evaluateResume 时，对原始简历和 Jarvis 生成预览简历做评分；如果原始简历来自上传 PDF/Word/TXT/HTML 文件，必须把注入文件元信息里的 fileId 作为 sourceFileId 传给 evaluateResume，不要把上传文件全文复制到 originalResumeText。
+            - 只有用户直接粘贴简历文本且没有 sourceFileId 时，才把原始简历文本传给 evaluateResume.originalResumeText。
+            - 只有当前上下文明确包含 JD 或岗位要求时，才把 jobDescription 传给 evaluateResume，否则不要生成 JD 匹配度评分。
             - 发布到工作台后，如需补充说明，只说极简的一句结果摘要即可；不要在 artifact 之前为了“解释”先输出长篇正文。
             - 缺失字段必须留空或省略；不要输出 XXX、未命名候选人、目标职位、学校名称、公司名称、项目名称、奖项名称等占位文本。除非用户明确提供某个占位值，否则不要自行补占位。
 

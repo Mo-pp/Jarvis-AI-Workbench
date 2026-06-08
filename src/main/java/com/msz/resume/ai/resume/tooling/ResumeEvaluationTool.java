@@ -35,14 +35,19 @@ public class ResumeEvaluationTool {
     @Tool("""
             Evaluate resume quality and optional JD matching by calling the dedicated resume scoring sub-agent.
             Use this after producing a resume or optimize_result artifact when resume scoring is needed.
-            Inputs: originalResumeText is the extracted raw resume text, generatedResume is the Jarvis preview ResumeVO,
-            jobDescription is optional, targetPosition is optional.
+            When the original resume came from an uploaded PDF/Word/TXT/HTML document, pass sourceFileId from the
+            injected file metadata. Do not copy the full uploaded document text into originalResumeText in that case.
+            Use originalResumeText only when the user pasted resume text directly and there is no uploaded source file.
+            Inputs: sourceFileId is the uploaded parsed document fileId, generatedResume is the Jarvis preview ResumeVO,
+            jobDescription is optional, targetPosition is optional. originalResumeText is a backward-compatible fallback.
             If jobDescription is blank or not explicitly available, this tool MUST NOT produce JD match scoring.
             If jobDescription is present, quality scoring includes JD relevance with fixed weight 45 and also returns jdMatch.
             Return value is a pending evaluation job JSON. The real scoring runs in the background.
             """)
     public String evaluateResume(
-            @P(value = "Original resume text extracted from the user input/file/image. Do not invent it.", required = false)
+            @P(value = "Uploaded source document fileId for the original resume. Use this for PDF/Word/TXT/HTML uploads.", required = false)
+            String sourceFileId,
+            @P(value = "Original resume text. Use only for directly pasted resume text when no sourceFileId exists. Do not pass uploaded file text here.", required = false)
             String originalResumeText,
             @P(value = "Jarvis generated/preview resume object. Use this when available.", required = false)
             ResumeVO generatedResume,
@@ -53,6 +58,7 @@ public class ResumeEvaluationTool {
     ) {
         try {
             ResumeEvaluationRequest request = ResumeEvaluationRequest.builder()
+                    .sourceFileId(sourceFileId)
                     .originalResumeText(originalResumeText)
                     .generatedResume(generatedResume)
                     .jobDescription(jobDescription)

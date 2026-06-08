@@ -22,6 +22,8 @@ public class ResumeEvaluationJob {
 
     private String status;
 
+    private String sourceFileId;
+
     private String originalResumeText;
 
     private String generatedResumeJson;

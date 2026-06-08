@@ -35,6 +35,7 @@ public class ResumeEvaluationJobService {
         job.setSessionId(blankToNull(sessionId));
         job.setRunId(blankToNull(runId));
         job.setStatus(ResumeEvaluationJobStatus.pending.name());
+        job.setSourceFileId(request != null ? blankToNull(request.getSourceFileId()) : null);
         job.setOriginalResumeText(request != null ? request.getOriginalResumeText() : null);
         job.setGeneratedResumeJson(serializeGeneratedResume(request));
         job.setJobDescription(request != null ? request.getJobDescription() : null);

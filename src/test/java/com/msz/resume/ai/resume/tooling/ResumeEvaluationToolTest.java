@@ -2,6 +2,7 @@ package com.msz.resume.ai.resume.tooling;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.msz.resume.ai.resume.evaluation.dto.ResumeEvaluationRequest;
 import com.msz.resume.ai.resume.evaluation.entity.ResumeEvaluationJob;
 import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationAsyncService;
 import com.msz.resume.ai.resume.evaluation.service.ResumeEvaluationJobService;
@@ -9,6 +10,7 @@ import com.msz.resume.ai.tool.ToolRuntimeContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -39,7 +41,7 @@ class ResumeEvaluationToolTest {
         ToolRuntimeContext.setSessionId("session-1");
         ToolRuntimeContext.setRunId("run-1");
 
-        String raw = tool.evaluateResume("原始简历", null, "", "Java 后端");
+        String raw = tool.evaluateResume("file-123", "原始简历", null, "", "Java 后端");
         JsonNode node = objectMapper.readTree(raw);
 
         assertEquals("resume_evaluation_pending", node.path("type").asText());
@@ -47,6 +49,11 @@ class ResumeEvaluationToolTest {
         assertEquals("pending", node.path("payload").path("status").asText());
         assertEquals("/api/resume/evaluation/status?jobId=job-123",
                 node.path("payload").path("statusUrl").asText());
-        verify(asyncService).evaluateLater(eq("job-123"), any());
+        ArgumentCaptor<ResumeEvaluationRequest> requestCaptor = ArgumentCaptor.forClass(ResumeEvaluationRequest.class);
+        verify(jobService).createPendingJob(eq("session-1"), eq("run-1"), requestCaptor.capture());
+        assertEquals("file-123", requestCaptor.getValue().getSourceFileId());
+        assertEquals("原始简历", requestCaptor.getValue().getOriginalResumeText());
+        verify(asyncService).evaluateLater(eq("job-123"), requestCaptor.capture());
+        assertEquals("file-123", requestCaptor.getValue().getSourceFileId());
     }
 }

@@ -1030,7 +1030,13 @@ public class ClaudeController {
                     StringBuilder sb = new StringBuilder();
                     sb.append(userMessage);
                     sb.append("\n\n---\n");
-                    sb.append("文件内容（").append(parsedFile.getFileName()).append("）：\n");
+                    sb.append("已解析上传文件：\n");
+                    sb.append("- fileId: ").append(parsedFile.getFileId()).append("\n");
+                    sb.append("- fileName: ").append(blankTo(parsedFile.getFileName(), "(未命名文件)")).append("\n");
+                    sb.append("- fileType: ").append(blankTo(parsedFile.getFileType(), "(未知类型)")).append("\n");
+                    sb.append("- fileKind: ").append(blankTo(parsedFile.getFileKind(), "document")).append("\n");
+                    sb.append("如果这个文件是原始简历，调用 evaluateResume 时必须把 fileId 作为 sourceFileId 传入，不要把下方全文复制到 originalResumeText。\n\n");
+                    sb.append("文件内容（").append(blankTo(parsedFile.getFileName(), parsedFile.getFileId())).append("）：\n");
                     sb.append("---\n");
                     sb.append(parsedFile.getContent());
                     sb.append("\n---");
@@ -1044,6 +1050,10 @@ public class ClaudeController {
                     log.warn("[ClaudeController] 文件不存在或已过期: fileId={}", fileId);
                     return userMessage + "\n\n[文件不存在或已过期，请重新上传]";
                 });
+    }
+
+    private String blankTo(String value, String fallback) {
+        return value != null && !value.isBlank() ? value.trim() : fallback;
     }
 
     UserMessage buildUserMessage(ChatRequest request) {

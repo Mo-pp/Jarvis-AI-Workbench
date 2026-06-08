@@ -42,6 +42,8 @@ class ResumeGuideToolTest {
         assertTrue(guide.contains("resumeStyle.pageMarginX / pageMarginY"));
         assertTrue(guide.contains("summary、education、work、project、campus、award、skills"));
         assertTrue(guide.contains("生成简历时要主动提高后续 evaluateResume 的质量评分"));
+        assertTrue(guide.contains("作为 sourceFileId 传给 evaluateResume"));
+        assertTrue(guide.contains("不要把上传文件全文复制到 originalResumeText"));
         assertTrue(guide.contains("原始简历里的项目地址、GitHub、在线演示"));
         assertTrue(guide.contains("出现“技术栈：...”时写入 techStack"));
         assertTrue(guide.contains("默认不要生成个人总结"));
