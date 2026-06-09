@@ -1,6 +1,7 @@
 package com.msz.resume.ai.chat.runtime.subagent;
 
 import com.msz.resume.ai.agent.SubAgentType;
+import com.msz.resume.ai.chat.runtime.node.inner.SubAgentWrapUpNode;
 import com.msz.resume.ai.chat.runtime.trace.TraceAgentDescriptor;
 import com.msz.resume.ai.integrations.openviking.core.context.OpenVikingIdentitySupport;
 import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
@@ -136,6 +137,8 @@ public class SubGraphNode {
         state.put(QueryLoopState.IS_SUB_AGENT, true);
         state.put(QueryLoopState.SUB_AGENT_TYPE, agentType);
         state.put(QueryLoopState.MAX_TURNS, maxTurns);
+        state.put(QueryLoopState.SUB_AGENT_WRAP_UP, false);
+        state.put(QueryLoopState.SUB_AGENT_WRAP_UP_MAX_TURNS, SubAgentWrapUpNode.DEFAULT_WRAP_UP_MAX_TURNS);
         state.put(QueryLoopState.SUB_AGENT_TASK, taskDescription);
         state.put(QueryLoopState.USER_CONTEXT, userContext);
         state.put(QueryLoopState.OPENVIKING_IDENTITY, OpenVikingIdentitySupport.fromUserProfile(userContext));
@@ -172,8 +175,13 @@ public class SubGraphNode {
 
         // 提取最终AI消息作为摘要
         String summary = extractFinalAiMessage(finalState);
+        boolean hasEffectiveSummary = summary != null && !summary.isBlank();
         if (summary == null || summary.isBlank()) {
             summary = "子Agent未生成有效回复";
+        }
+
+        if (finalState.isSubAgentWrapUp() && hasEffectiveSummary) {
+            return SubAgentResult.wrappedUp(summary, turnCount, finalState.getMaxTurns(), inputTokens, outputTokens);
         }
 
         // 判断是否因轮次超限终止

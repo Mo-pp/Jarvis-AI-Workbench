@@ -117,14 +117,19 @@ public class DefaultDynamicSectionProvider implements DynamicSectionProvider {
             SubAgentType.GLOBAL_EXCLUDED_TOOLS
         );
 
-        if (filteredSpecs.isEmpty()) {
+        return getSessionGuidance(filteredSpecs);
+    }
+
+    @Override
+    public String getSessionGuidance(List<ToolSpecification> permittedToolSpecs) {
+        if (permittedToolSpecs == null || permittedToolSpecs.isEmpty()) {
             return "";
         }
 
         StringBuilder sb = new StringBuilder();
         sb.append("## Session Guidance\n\n");
         sb.append("You have access to the following tools:\n");
-        for (ToolSpecification tool : filteredSpecs) {
+        for (ToolSpecification tool : permittedToolSpecs) {
             sb.append("- ").append(tool.name());
             if (tool.description() != null && !tool.description().isBlank()) {
                 sb.append(": ").append(tool.description());

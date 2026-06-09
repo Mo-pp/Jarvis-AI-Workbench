@@ -220,6 +220,17 @@ public class QueryLoopState extends AgentState{
      */
     public static final String SUB_AGENT_TOKEN_ACCUMULATOR = "subAgentTokenAccumulator";
 
+    /**
+     * 子Agent是否已经进入强制收束阶段。
+     * 收束阶段不再执行工具，只允许模型基于现有上下文整理最终结果。
+     */
+    public static final String SUB_AGENT_WRAP_UP = "subAgentWrapUp";
+
+    /**
+     * 子Agent强制收束阶段最多额外允许的 LLM 轮次。
+     */
+    public static final String SUB_AGENT_WRAP_UP_MAX_TURNS = "subAgentWrapUpMaxTurns";
+
     // ==================== 实时 Trace 支持 ====================
 
     /**
@@ -299,6 +310,8 @@ public class QueryLoopState extends AgentState{
             Map.entry(SUB_AGENT_INPUT_TOKENS, Channels.base(() -> 0)),
             Map.entry(SUB_AGENT_OUTPUT_TOKENS, Channels.base(() -> 0)),
             Map.entry(SUB_AGENT_TOKEN_ACCUMULATOR, Channels.appender(ArrayList::new)),
+            Map.entry(SUB_AGENT_WRAP_UP, Channels.base(() -> false)),
+            Map.entry(SUB_AGENT_WRAP_UP_MAX_TURNS, Channels.base(() -> 0)),
             Map.entry(TRACE_RUN_ID, Channels.base(() -> "")),
             Map.entry(TRACE_AGENT_ID, Channels.base(() -> "main")),
             Map.entry(TRACE_AGENT_LABEL, Channels.base(() -> "Main Agent")),
@@ -506,6 +519,20 @@ public class QueryLoopState extends AgentState{
     @SuppressWarnings("unchecked")
     public List<Map<String, Integer>> getSubAgentTokenAccumulator() {
         return this.<List<Map<String, Integer>>>value(SUB_AGENT_TOKEN_ACCUMULATOR).orElse(new ArrayList<>());
+    }
+
+    /**
+     * 子Agent是否处于强制收束阶段。
+     */
+    public boolean isSubAgentWrapUp() {
+        return this.<Boolean>value(SUB_AGENT_WRAP_UP).orElse(false);
+    }
+
+    /**
+     * 子Agent强制收束阶段最多额外允许的 LLM 轮次。
+     */
+    public int getSubAgentWrapUpMaxTurns() {
+        return this.<Integer>value(SUB_AGENT_WRAP_UP_MAX_TURNS).orElse(0);
     }
 
     /** 取当前流式运行 ID，没有则返回 null。 */

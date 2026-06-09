@@ -1,6 +1,7 @@
 package com.msz.resume.ai.chat.llm.config;
 
 import dev.langchain4j.community.model.dashscope.QwenStreamingChatModel;
+import dev.langchain4j.http.client.HttpClientBuilderLoader;
 import dev.langchain4j.model.chat.ChatModel;
 import dev.langchain4j.model.chat.StreamingChatModel;
 import dev.langchain4j.model.chat.listener.ChatModelListener;
@@ -153,7 +154,7 @@ public class LLMConfig {
         private String wireApi = "chat";
 
         /** 请求超时时间（秒） */
-        private int timeout = 120;
+        private int timeout = 300;
 
         /** 是否记录原始请求体日志 */
         private boolean logRequests = false;
@@ -248,6 +249,7 @@ public class LLMConfig {
                     .baseUrl(gpt.getBaseUrl())
                     .apiKey(gpt.getApiKey())
                     .modelName(gpt.getModel())
+                    .timeout(Duration.ofSeconds(gpt.getTimeout()))
                     .logRequests(gpt.isLogRequests())
                     .logResponses(gpt.isLogResponses());
 
@@ -293,6 +295,9 @@ public class LLMConfig {
 
         if ("responses".equalsIgnoreCase(gpt.getWireApi())) {
             var builder = OpenAiResponsesStreamingChatModel.builder()
+                    .httpClientBuilder(HttpClientBuilderLoader.loadHttpClientBuilder()
+                            .connectTimeout(Duration.ofSeconds(gpt.getTimeout()))
+                            .readTimeout(Duration.ofSeconds(gpt.getTimeout())))
                     .baseUrl(gpt.getBaseUrl())
                     .apiKey(gpt.getApiKey())
                     .modelName(gpt.getModel())

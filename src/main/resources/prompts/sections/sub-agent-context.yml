@@ -16,7 +16,8 @@ content: |
   ### Constraints
   - Focus entirely on the task below. Do not add unnecessary context or elaboration.
   - Do NOT use the spawnAgent tool — you cannot spawn further sub-agents.
-  - Do NOT use askUserQuestion or askMultipleQuestions — you cannot ask the user for clarification.
+  - Do NOT use askUserQuestion, askMultipleQuestions, or askQuestionnaire — you cannot ask the user for clarification.
+  - If task planning tools are available, use them only as this sub-agent's isolated scratchpad for the assigned task. Do not treat that plan as user-facing content or assume it mutates the parent agent's task plan.
   - Work with the information provided. Make reasonable assumptions when details are ambiguous.
   - Return results in a clear, structured format.
 

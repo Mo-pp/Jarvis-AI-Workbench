@@ -2,8 +2,7 @@ package com.msz.resume.ai.chat.prompt.config;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.DefaultResourceLoader;
 
 import java.util.Map;
 import java.util.Optional;
@@ -13,14 +12,12 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * YamlPromptConfigLoader 集成测试
  *
- * <p>使用 Spring Boot Test 加载配置文件进行测试
+ * <p>直接构造 loader 读取 classpath 配置文件，避免启动完整应用上下文。
  */
-@SpringBootTest
 @DisplayName("YamlPromptConfigLoader 测试")
 class YamlPromptConfigLoaderTest {
 
-    @Autowired
-    private PromptConfigLoader configLoader;
+    private final PromptConfigLoader configLoader = new YamlPromptConfigLoader(new DefaultResourceLoader());
 
     @Test
     @DisplayName("应加载 intro section 模板")
@@ -146,5 +143,41 @@ class YamlPromptConfigLoaderTest {
         assertTrue(template.contains("createPlan"));
         assertTrue(template.contains("updateStatus"));
         assertTrue(template.contains("上下文压缩"));
+    }
+
+    @Test
+    @DisplayName("工具指南应包含简历项目业务探索子Agent调度规则")
+    void testUsingYourToolsContainsResumeBusinessExploreRules() {
+        String template = configLoader.loadSectionTemplate("using_your_tools");
+
+        assertTrue(template.contains("### 简历项目业务探索子Agent"));
+        assertTrue(template.contains("ResumeBusinessExplore"));
+        assertTrue(template.contains("默认并行派发 3 个"));
+        assertTrue(template.contains("最多 5 个"));
+        assertTrue(template.contains("API/Controller/路由探索"));
+        assertTrue(template.contains("前端页面/工作台流程探索"));
+        assertTrue(template.contains("数据模型/状态流/集成探索"));
+        assertTrue(template.contains("problemSolved"));
+        assertTrue(template.contains("canWriteMetricNow"));
+        assertTrue(template.contains("placeholderMetric"));
+        assertTrue(template.contains("README 只能辅助"));
+        assertTrue(template.contains("继续补派 1-2 个"));
+    }
+
+    @Test
+    @DisplayName("工具指南应包含 ResumeBusinessSynthesis 合成与业务故事构造规则")
+    void testUsingYourToolsContainsResumeBusinessSynthesisRules() {
+        String template = configLoader.loadSectionTemplate("using_your_tools");
+
+        assertTrue(template.contains("### ResumeBusinessSynthesis 合成阶段"));
+        assertTrue(template.contains("业务场景 -> 用户痛点 -> 做了什么 -> 解决了什么 -> 可写指标/X占位 -> 最终简历 bullet"));
+        assertTrue(template.contains("selectedFindings"));
+        assertTrue(template.contains("discardedFindings"));
+        assertTrue(template.contains("businessSelfReview"));
+        assertTrue(template.contains("缺少现成业务故事时"));
+        assertTrue(template.contains("必须基于项目事实编造优化故事"));
+        assertTrue(template.contains("提升 X%"));
+        assertTrue(template.contains("下降 Xms"));
+        assertTrue(template.contains("严禁给出具体数字"));
     }
 }

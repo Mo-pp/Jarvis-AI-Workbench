@@ -12,6 +12,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -50,6 +51,39 @@ class ChatStreamContextTest {
         assertEquals("hidden", done.path("payload").path("mode").asText());
         assertEquals("gpt", done.path("payload").path("provider").asText());
         assertFalse(done.path("payload").path("summaryAvailable").asBoolean());
+    }
+
+    @Test
+    @DisplayName("Task update 事件应携带完整任务列表和进度统计")
+    void shouldSendTaskUpdateEvents() throws Exception {
+        RecordingSseEmitter emitter = new RecordingSseEmitter();
+        ChatStreamEventSink sink = new ChatStreamEventSink(emitter, OBJECT_MAPPER, sessionId);
+        ChatStreamContext.bind(sessionId, sink);
+
+        ChatStreamContext.sendTaskUpdate(sessionId, List.of(
+                task("task-1", "读取项目结构", "completed"),
+                task("task-2", "生成简历", "in_progress")
+        ));
+
+        JsonNode event = emitter.eventJsonAt(0);
+
+        assertEquals("task_update", event.path("type").asText());
+        assertEquals(2, event.path("payload").path("taskPlan").size());
+        assertEquals("读取项目结构", event.path("payload").path("taskPlan").get(0).path("description").asText());
+        assertEquals(2, event.path("payload").path("taskProgress").path("total").asInt());
+        assertEquals(1, event.path("payload").path("taskProgress").path("completed").asInt());
+        assertEquals(1, event.path("payload").path("taskProgress").path("in_progress").asInt());
+    }
+
+    private Map<String, Object> task(String taskId, String description, String status) {
+        return Map.of(
+                "taskId", taskId,
+                "description", description,
+                "detail", "",
+                "status", status,
+                "createdAt", 1L,
+                "updatedAt", 1L
+        );
     }
 
     private static class RecordingSseEmitter extends SseEmitter {

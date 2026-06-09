@@ -6,6 +6,7 @@ import com.msz.resume.ai.integrations.openviking.core.model.OpenVikingIdentity;
 import com.msz.resume.ai.chat.runtime.node.inner.CallLlmNode;
 import com.msz.resume.ai.chat.runtime.node.inner.ErrorRecoveryNode;
 import com.msz.resume.ai.chat.runtime.node.inner.ExecuteToolNode;
+import com.msz.resume.ai.chat.runtime.node.inner.SubAgentWrapUpNode;
 import com.msz.resume.ai.chat.runtime.node.inner.strategy.ToolExecutionResult;
 import com.msz.resume.ai.chat.runtime.state.serialization.QueryLoopStateSerializer;
 import com.msz.resume.ai.chat.runtime.state.QueryLoopState;
@@ -47,6 +48,7 @@ public class QueryLoopGraphConfig {
     public StateGraph<QueryLoopState> queryLoopGraph(
             CallLlmNode callLlmNode,
             ExecuteToolNode executeToolNode,
+            SubAgentWrapUpNode subAgentWrapUpNode,
             ErrorRecoveryNode errorRecoveryNode
     ) throws Exception{
 
@@ -78,11 +80,16 @@ public class QueryLoopGraphConfig {
                         return "call_llm";
                     }
 
-                    // 子Agent模式：轮次超限，直接结束
                     if (currentState.isSubAgent()) {
                         int maxTurns = currentState.getMaxTurns();
                         if (maxTurns > 0 && currentState.getTurnCount() >= maxTurns) {
-                            log.info("[afterLlmRoute] 子Agent达到最大轮次限制: {}/{}", currentState.getTurnCount(), maxTurns);
+                            if (!currentState.isSubAgentWrapUp()) {
+                                log.info("[afterLlmRoute] 子Agent达到探索轮次限制，进入强制收束: {}/{}",
+                                        currentState.getTurnCount(), maxTurns);
+                                return "sub_agent_wrap_up";
+                            }
+                            log.info("[afterLlmRoute] 子Agent强制收束阶段达到轮次限制: {}/{}",
+                                    currentState.getTurnCount(), maxTurns);
                             return "end";
                         }
                     }
@@ -92,6 +99,9 @@ public class QueryLoopGraphConfig {
                     ChatMessage lastMessage = messages.getLast();
                     if (lastMessage instanceof AiMessage aiMessage) {
                         if (aiMessage.hasToolExecutionRequests()) {
+                            if (currentState.isSubAgentWrapUp()) {
+                                return "sub_agent_wrap_up";
+                            }
                             return "execute_tool";
                         }
                     }
@@ -152,6 +162,7 @@ public class QueryLoopGraphConfig {
         // 添加节点
         graph.addNode("call_llm", callLlmNode);
         graph.addNode("execute_tool", executeToolNode);
+        graph.addNode("sub_agent_wrap_up", subAgentWrapUpNode);
         graph.addNode("error_recovery", errorRecoveryNode);
 
         // 定义跳转边
@@ -160,6 +171,7 @@ public class QueryLoopGraphConfig {
         // call_llm 之后的多路分支（纯文本回复直接结束）
         graph.addConditionalEdges("call_llm", afterLlmRoute, Map.of(
                 "execute_tool", "execute_tool",
+                "sub_agent_wrap_up", "sub_agent_wrap_up",
                 "error_recovery", "error_recovery",
                 "call_llm", "call_llm",
                 "end", END
@@ -170,6 +182,8 @@ public class QueryLoopGraphConfig {
                 "call_llm", "call_llm",
                 "end", END
         ));
+
+        graph.addEdge("sub_agent_wrap_up", "call_llm");
 
         // error_recovery 之后的两路分支
         graph.addConditionalEdges("error_recovery", afterErrorRecoveryRoute, Map.of(

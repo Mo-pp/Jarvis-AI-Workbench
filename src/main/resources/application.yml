@@ -61,7 +61,7 @@ server:
 jarvis:
   chat:
     # Resume generation + evaluation can legitimately exceed 3 minutes when the scoring sub-agent calls an LLM.
-    stream-timeout-ms: ${JARVIS_CHAT_STREAM_TIMEOUT_MS:600000}
+    stream-timeout-ms: ${JARVIS_CHAT_STREAM_TIMEOUT_MS:1800000}
   llm:
     # 当前使用的模型提供商：zhipu（智谱）、dashscope（通义千问）、gpt（OpenAI Responses 兼容）或 qianfan-coding-plan（千帆 Coding Plan）
     provider: ${JARVIS_LLM_PROVIDER:gpt}
@@ -81,10 +81,10 @@ jarvis:
     # GPT 配置（OpenAI Responses API 兼容）
     gpt:
       api-key: ${OPENAI_API_KEY:}
-      model: ${OPENAI_MODEL:gpt-5.4}
-      base-url: ${OPENAI_BASE_URL:https://cf.ai-pixel.online/v1}
+      model: ${OPENAI_MODEL:gpt-5.5}
+      base-url: ${OPENAI_BASE_URL:https://api.csprokit.cn/v1} #https://api.csprokit.cn/v1  https://cf.ai-pixel.online/v1
       wire-api: ${OPENAI_WIRE_API:chat}
-      timeout: ${OPENAI_TIMEOUT:120}
+      timeout: ${OPENAI_TIMEOUT:300}
       reasoning-effort: ${OPENAI_REASONING_EFFORT:high}
       log-requests: ${OPENAI_LOG_REQUESTS:false}
       log-responses: ${OPENAI_LOG_RESPONSES:false}

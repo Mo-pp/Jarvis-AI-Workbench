@@ -45,9 +45,11 @@ import org.bsc.langgraph4j.action.AsyncNodeAction;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
@@ -264,13 +266,16 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
                 if (isSubAgent) {
                     // 子Agent模式：使用精简提示词（复用父级静态前缀，缓存命中）
                     // 和受限工具集（根据agentType配置）
-                    systemPrompt = buildSubAgentPrompt(currentState);
-
                     SubAgentType agentType = currentState.getSubAgentType();
-                    toolSpecs = subAgentTypeRegistry.getToolSpecifications(
-                            agentType,
-                            toolRegistry,
-                            currentState.getAvailableTools());
+                    if (currentState.isSubAgentWrapUp()) {
+                        toolSpecs = List.of();
+                    } else {
+                        toolSpecs = subAgentTypeRegistry.getToolSpecifications(
+                                agentType,
+                                toolRegistry,
+                                subAgentToolNames(currentState, agentType));
+                    }
+                    systemPrompt = buildSubAgentPrompt(currentState, toolSpecs);
                     log.info("[CallLlmNode] 子Agent模式: 类型={}, 任务={}, 工具数={}",
                             agentType, currentState.getSubAgentTask(), toolSpecs.size());
                 } else {
@@ -474,7 +479,7 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
      */
     private String buildSubAgentPrompt(QueryLoopState state) {
         PromptResult result = promptBuilder.buildSubAgent(
-                state.getSubAgentTask(),
+                subAgentTaskPrompt(state),
                 state.getUserContext(),
                 toolRegistry,
                 state.getAvailableTools()
@@ -482,6 +487,42 @@ public class CallLlmNode implements AsyncNodeAction<QueryLoopState> {
         log.debug("[CallLlmNode] 子Agent提示词构建完成，预估token数={}", result.tokenEstimate());
         log.trace("[CallLlmNode] 子Agent提示词:\n{}", result.systemPrompt());
         return result.systemPrompt();
+    }
+
+    private String buildSubAgentPrompt(QueryLoopState state, List<ToolSpecification> permittedToolSpecs) {
+        PromptResult result = promptBuilder.buildSubAgent(
+                subAgentTaskPrompt(state),
+                state.getUserContext(),
+                toolRegistry,
+                permittedToolSpecs
+        );
+        log.debug("[CallLlmNode] 子Agent提示词构建完成，预估token数={}", result.tokenEstimate());
+        log.trace("[CallLlmNode] 子Agent提示词:\n{}", result.systemPrompt());
+        return result.systemPrompt();
+    }
+
+    private String subAgentTaskPrompt(QueryLoopState state) {
+        String task = state.getSubAgentTask();
+        if (!state.isSubAgentWrapUp()) {
+            return task;
+        }
+        return task + """
+
+                ### Forced Wrap-Up Mode
+                You have reached the exploration turn budget. Do not request or plan any more tool calls.
+                Produce the best final result from the evidence already present in this sub-agent context.
+                If the original task requested a specific output schema or findings fields, use that schema now.
+                Be explicit about evidence strength, gaps, risks, and which conclusions are inferred.
+                """;
+    }
+
+    private Set<String> subAgentToolNames(QueryLoopState state, SubAgentType agentType) {
+        if (agentType.supportsCustomTools() && state.getAvailableTools().isEmpty()) {
+            return state.getAvailableTools();
+        }
+        Set<String> toolNames = new LinkedHashSet<>(state.getAvailableTools());
+        toolNames.addAll(state.getDiscoveredTools());
+        return toolNames;
     }
 
     /** 在流式和非流式模型之间做统一适配，并尽量把 token delta 推给前端。 */

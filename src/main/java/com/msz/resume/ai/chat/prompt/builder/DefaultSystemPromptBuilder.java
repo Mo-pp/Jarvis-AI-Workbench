@@ -6,8 +6,10 @@ import com.msz.resume.ai.chat.prompt.model.SectionName;
 import com.msz.resume.ai.chat.prompt.model.UserProfile;
 import com.msz.resume.ai.chat.prompt.provider.DynamicSectionProvider;
 import com.msz.resume.ai.tool.registry.ToolRegistry;
+import dev.langchain4j.agent.tool.ToolSpecification;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -151,6 +153,26 @@ public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
         return new PromptResult(fullPrompt, staticPart, dynamicPart, tokenEstimate);
     }
 
+    @Override
+    public PromptResult buildSubAgent(String taskDescription, UserProfile userContext,
+                                      ToolRegistry toolRegistry, List<ToolSpecification> permittedToolSpecs) {
+        String staticPart = buildStatic();
+        String dynamicPart = buildSubAgentDynamic(taskDescription, permittedToolSpecs);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(staticPart);
+
+        if (!dynamicPart.isBlank()) {
+            sb.append("\n\n").append(PromptResult.BOUNDARY).append("\n\n");
+            sb.append(dynamicPart);
+        }
+
+        String fullPrompt = sb.toString().trim();
+        int tokenEstimate = estimateTokens(fullPrompt);
+
+        return new PromptResult(fullPrompt, staticPart, dynamicPart, tokenEstimate);
+    }
+
     /**
      * 构建子Agent动态部分
      *
@@ -168,6 +190,16 @@ public class DefaultSystemPromptBuilder implements SystemPromptBuilder {
         appendIfNotEmpty(sb, dynamicSectionProvider.getSessionGuidance(toolRegistry, permittedTools));
 
         // 3. env_info：模型信息（子Agent也需要知道自己是什么模型）
+        appendIfNotEmpty(sb, dynamicSectionProvider.getEnvInfo());
+
+        return sb.toString().trim();
+    }
+
+    private String buildSubAgentDynamic(String taskDescription, List<ToolSpecification> permittedToolSpecs) {
+        StringBuilder sb = new StringBuilder();
+
+        appendIfNotEmpty(sb, dynamicSectionProvider.getSubAgentContext(taskDescription));
+        appendIfNotEmpty(sb, dynamicSectionProvider.getSessionGuidance(permittedToolSpecs));
         appendIfNotEmpty(sb, dynamicSectionProvider.getEnvInfo());
 
         return sb.toString().trim();

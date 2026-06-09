@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
  * <p>在子Agent模式下阻断特定的工具调用：
  * <ul>
  *   <li>askUserQuestion / askMultipleQuestions — 子Agent不能向用户提问</li>
+ *   <li>askQuestionnaire — 子Agent不能向用户提问</li>
  *   <li>spawnAgent — 子Agent不能再派发任务（防止递归嵌套）</li>
  * </ul>
  *
@@ -19,7 +20,7 @@ import org.springframework.stereotype.Component;
  * 在 YAML 配置中通过正则匹配工具名：
  * <pre>
  * - name: sub_agent_block
- *   matcher: "^(askUserQuestion|askMultipleQuestions|spawnAgent)$"
+ *   matcher: "^(askUserQuestion|askMultipleQuestions|askQuestionnaire|spawnAgent)$"
  *   action: subAgentBlockHook
  *   priority: 10
  * </pre>
@@ -37,11 +38,11 @@ public class SubAgentBlockHook implements ToolHook {
             return HookResult.continueResult();
         }
 
-        // 子Agent模式下，阻断 askUserQuestion / askMultipleQuestions / spawnAgent
+        // 子Agent模式下，阻断 askUserQuestion / askMultipleQuestions / askQuestionnaire / spawnAgent
         log.warn("[SubAgentBlockHook] 子Agent尝试调用 {}，已阻断", context.toolName());
 
         String blockMessage = switch (context.toolName()) {
-            case "askUserQuestion", "askMultipleQuestions" ->
+            case "askUserQuestion", "askMultipleQuestions", "askQuestionnaire" ->
                     "错误：子Agent模式下不可向用户提问。请根据已有信息继续执行任务，或直接返回结果。";
             case "spawnAgent" ->
                     "错误：子Agent不可再派发任务。请直接执行当前任务。";

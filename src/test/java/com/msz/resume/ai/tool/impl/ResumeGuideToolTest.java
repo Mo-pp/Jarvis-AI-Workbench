@@ -48,4 +48,25 @@ class ResumeGuideToolTest {
         assertTrue(guide.contains("出现“技术栈：...”时写入 techStack"));
         assertTrue(guide.contains("默认不要生成个人总结"));
     }
+
+    @Test
+    @DisplayName("getResumeGuide 返回说明应包含项目经历业务化硬规则")
+    void resumeGuideInstructionShouldContainProjectBusinessRules() {
+        String guide = new ResumeGuideTool().getResumeGuide();
+
+        assertTrue(guide.contains("项目经历业务化硬规则"));
+        assertTrue(guide.contains("每个重点项目的 bullet 至少 50% 必须以业务场景、用户动作、用户流程、交付对象或业务价值开头"));
+        assertTrue(guide.contains("README 只能作为弱证据"));
+        assertTrue(guide.contains("业务场景/用户动作 + 技术动作 + 结果/X占位指标"));
+        assertTrue(guide.contains("受证据约束的业务优化故事构造"));
+        assertTrue(guide.contains("缺少现成业务故事时"));
+        assertTrue(guide.contains("必须基于真实功能链路主动编造优化故事"));
+        assertTrue(guide.contains("提升 X%"));
+        assertTrue(guide.contains("下降 Xms"));
+        assertTrue(guide.contains("转化率提升 X%"));
+        assertTrue(guide.contains("采纳率提升 X%"));
+        assertTrue(guide.contains("严禁把未实测的 X 替换成具体数字"));
+        assertTrue(guide.contains("不要在项目描述里写“待实测指标/测量方法”"));
+        assertTrue(guide.contains("至少形成 3 个可写入简历的 X 占位指标候选"));
+    }
 }

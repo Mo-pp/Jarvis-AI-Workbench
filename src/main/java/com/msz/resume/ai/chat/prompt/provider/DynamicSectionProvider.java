@@ -2,7 +2,9 @@ package com.msz.resume.ai.chat.prompt.provider;
 
 import com.msz.resume.ai.chat.prompt.model.UserProfile;
 import com.msz.resume.ai.tool.registry.ToolRegistry;
+import dev.langchain4j.agent.tool.ToolSpecification;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -98,6 +100,10 @@ public interface DynamicSectionProvider {
     default String getSessionGuidance(ToolRegistry toolRegistry, Set<String> permittedTools) {
         // 默认实现回退到完整版本
         return getSessionGuidance(toolRegistry);
+    }
+
+    default String getSessionGuidance(List<ToolSpecification> permittedToolSpecs) {
+        return "";
     }
 
     /**

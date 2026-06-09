@@ -108,6 +108,9 @@ public class DelegationActionEventService {
         if (result.isMaxTurnsExceeded()) {
             return "子 Agent 已达到最大轮次，返回当前进展";
         }
+        if (result.isWrappedUp()) {
+            return "子 Agent 已达到探索轮次并完成强制收束，返回结果摘要";
+        }
         return "子 Agent 已完成，返回结果摘要";
     }
 

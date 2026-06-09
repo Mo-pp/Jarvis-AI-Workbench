@@ -3,7 +3,9 @@ package com.msz.resume.ai.chat.prompt.builder;
 import com.msz.resume.ai.chat.prompt.model.PromptResult;
 import com.msz.resume.ai.chat.prompt.model.UserProfile;
 import com.msz.resume.ai.tool.registry.ToolRegistry;
+import dev.langchain4j.agent.tool.ToolSpecification;
 
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -86,6 +88,9 @@ public interface SystemPromptBuilder {
      */
     PromptResult buildSubAgent(String taskDescription, UserProfile userContext,
                                ToolRegistry toolRegistry, Set<String> permittedTools);
+
+    PromptResult buildSubAgent(String taskDescription, UserProfile userContext,
+                               ToolRegistry toolRegistry, List<ToolSpecification> permittedToolSpecs);
 
     String buildStatic();
 

@@ -6,7 +6,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -19,7 +21,7 @@ import java.util.Set;
  * <pre>
  * 1. 合并黑名单：全局黑名单（GLOBAL_EXCLUDED_TOOLS） + Per-Agent黑名单
  * 2. 解析白名单：自定义工具 或 预定义白名单（如果包含 "*"，则使用所有可用工具）
- * 3. 过滤工具：调用 ToolRegistry.getSpecificationsForToolNames()
+ * 3. 过滤工具：General 使用 ToolRegistry.getSpecificationsForToolNames()；预定义只读类型使用精确白名单
  * </pre>
  *
  * <h2>使用示例</h2>
@@ -44,6 +46,7 @@ public class SubAgentTypeRegistry {
      * <p>规则：
      * <ul>
      *   <li>General + 自定义工具：返回自定义工具集合</li>
+     *   <li>只读预定义类型 + 已发现工具：只追加读/搜/列举类延迟工具</li>
      *   <li>白名单包含 "*"：返回所有可用工具</li>
      *   <li>其他：返回预定义白名单</li>
      * </ul>
@@ -61,15 +64,23 @@ public class SubAgentTypeRegistry {
         }
 
         // 获取所有可用工具名称
-        Set<String> allToolNames = new HashSet<>();
+        Set<String> allToolNames = new LinkedHashSet<>();
         allToolNames.addAll(toolRegistry.getCoreToolNames());
         allToolNames.addAll(toolRegistry.getDeferredToolNames());
 
         // 白名单为 "*" 表示所有工具
-        Set<String> allowed = type.getAllowedTools();
+        Set<String> allowed = new LinkedHashSet<>(type.getAllowedTools());
         if (allowed.contains("*")) {
             log.debug("[SubAgentTypeRegistry] Agent类型 {} 白名单为 *，返回所有工具", type);
             return allToolNames;
+        }
+
+        if (type.usesExactToolWhitelist() && customTools != null && !customTools.isEmpty()) {
+            for (String toolName : customTools) {
+                if (isSafeDiscoveredReadTool(toolRegistry, toolName)) {
+                    allowed.add(toolName);
+                }
+            }
         }
 
         log.debug("[SubAgentTypeRegistry] Agent类型 {} 白名单: {}", type, allowed);
@@ -96,7 +107,7 @@ public class SubAgentTypeRegistry {
      * <ol>
      *   <li>合并黑名单：全局黑名单 + Per-Agent黑名单</li>
      *   <li>解析白名单：自定义工具 或 预定义白名单</li>
-     *   <li>过滤工具：调用 ToolRegistry.getSpecificationsForToolNames()</li>
+     *   <li>过滤工具：General 合并核心工具；预定义只读类型仅暴露白名单工具</li>
      * </ol>
      *
      * @param type Agent类型
@@ -119,10 +130,42 @@ public class SubAgentTypeRegistry {
         Set<String> allowedTools = resolveAllowedTools(type, toolRegistry, customTools);
 
         // 3. 过滤工具（结合白名单和黑名单）
-        List<ToolSpecification> specs = toolRegistry.getSpecificationsForToolNames(allowedTools, allDisallowed);
+        List<ToolSpecification> specs = type.usesExactToolWhitelist()
+                ? toolRegistry.getExactSpecificationsForToolNames(allowedTools, allDisallowed)
+                : toolRegistry.getSpecificationsForToolNames(allowedTools, allDisallowed);
         log.info("[SubAgentTypeRegistry] Agent类型 {} 最终工具数量: {}", type, specs.size());
 
         return specs;
+    }
+
+    private boolean isSafeDiscoveredReadTool(ToolRegistry toolRegistry, String toolName) {
+        if (toolName == null || toolName.isBlank()) {
+            return false;
+        }
+        if (toolRegistry.getDeferredToolSpecification(toolName) == null) {
+            return false;
+        }
+
+        String normalized = toolName.trim().toLowerCase(Locale.ROOT);
+        if (containsAny(normalized,
+                "write", "delete", "remove", "forget", "publish", "create", "add", "update",
+                "edit", "save", "upload", "submit", "send", "remember", "spawn", "ask", "draft",
+                "generate", "evaluate")) {
+            return false;
+        }
+
+        return containsAny(normalized,
+                "read", "list", "tree", "grep", "glob", "find", "search", "query",
+                "browse", "get", "fetch", "lookup", "view", "inspect", "scan", "open");
+    }
+
+    private boolean containsAny(String value, String... fragments) {
+        for (String fragment : fragments) {
+            if (value.contains(fragment)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

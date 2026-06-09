@@ -153,12 +153,18 @@ class OpenAiResponsesChatModel implements ChatModel {
     private final String textVerbosity;
     private final Boolean store;
     private final Boolean strict;
+    private final Duration timeout;
     private final ChatRequestParameters defaultRequestParameters;
     private final List<ChatModelListener> listeners;
 
     private OpenAiResponsesChatModel(ResponsesChatModelBuilder builder) {
         HttpClientBuilder httpClientBuilder =
                 getOrDefault(builder.httpClientBuilder, HttpClientBuilderLoader::loadHttpClientBuilder);
+        this.timeout = builder.timeout;
+        if (timeout != null) {
+            httpClientBuilder.connectTimeout(timeout);
+            httpClientBuilder.readTimeout(timeout);
+        }
         HttpClient delegate = httpClientBuilder.build();
         boolean logRequests = Boolean.TRUE.equals(builder.logRequests);
         boolean logResponses = Boolean.TRUE.equals(builder.logResponses);
@@ -631,6 +637,7 @@ class OpenAiResponsesChatModel implements ChatModel {
         private String textVerbosity;
         private Boolean store;
         private Boolean strict;
+        private Duration timeout;
         private Boolean logRequests;
         private Boolean logResponses;
         private List<ChatModelListener> listeners;
@@ -742,6 +749,11 @@ class OpenAiResponsesChatModel implements ChatModel {
 
         ResponsesChatModelBuilder strict(Boolean strict) {
             this.strict = strict;
+            return this;
+        }
+
+        ResponsesChatModelBuilder timeout(Duration timeout) {
+            this.timeout = timeout;
             return this;
         }
 

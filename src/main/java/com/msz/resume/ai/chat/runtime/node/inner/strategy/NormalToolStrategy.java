@@ -3,6 +3,7 @@ package com.msz.resume.ai.chat.runtime.node.inner.strategy;
 import com.msz.resume.ai.chat.runtime.trace.TraceService;
 import com.msz.resume.ai.chat.runtime.trace.ArtifactActionEventService;
 import com.msz.resume.ai.chat.runtime.trace.AssistantCheckpointService;
+import com.msz.resume.ai.chat.runtime.trace.ChatStreamContext;
 import com.msz.resume.ai.chat.runtime.trace.ToolActionEventService;
 import com.msz.resume.ai.chat.runtime.trace.langfuse.LangfuseTracingService;
 import com.msz.resume.ai.hook.HookContext;
@@ -155,6 +156,7 @@ public class NormalToolStrategy implements ToolExecutionStrategy {
                         traceService.completeToolCall(context.traceContext(), context.agentDescriptor(), req);
                     }
                     toolActionEventService.toolSucceeded(context.traceContext(), context.agentDescriptor(), req, toolResult);
+                    publishMainTaskUpdate(context, req.name());
                     if ("publishArtifact".equals(req.name()) && isPublishedArtifact(toolResult)) {
                         transition = ToolExecutionResult.TRANSITION_ARTIFACT_READY;
                         artifactPublished = true;
@@ -191,6 +193,32 @@ public class NormalToolStrategy implements ToolExecutionStrategy {
                 .discoveredTools(discoveredTools)
                 .taskPlan(taskPlan)
                 .build();
+    }
+
+    private void publishMainTaskUpdate(ToolExecutionContext context, String toolName) {
+        if (!isTaskPlanTool(toolName) || context == null || context.state() == null || context.state().isSubAgent()) {
+            return;
+        }
+        if (context.agentDescriptor() != null && !"main".equals(context.agentDescriptor().agentScope())) {
+            return;
+        }
+        String sessionId = context.state().getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            return;
+        }
+        try {
+            ChatStreamContext.sendTaskUpdate(sessionId, TaskPlanTool.getCurrentTasks());
+        } catch (Exception e) {
+            log.warn("[NormalToolStrategy] task_update 实时同步失败，忽略并继续执行: sessionId={}, tool={}, error={}",
+                    sessionId, toolName, e.getMessage());
+        }
+    }
+
+    private boolean isTaskPlanTool(String toolName) {
+        return "createPlan".equals(toolName)
+                || "updateStatus".equals(toolName)
+                || "addTask".equals(toolName)
+                || "removeTask".equals(toolName);
     }
 
     /**

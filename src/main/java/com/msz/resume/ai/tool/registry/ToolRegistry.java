@@ -447,6 +447,37 @@ public class ToolRegistry {
     }
 
     /**
+     * 根据工具名称集合精确获取工具规格。
+     *
+     * <p>用于预定义子Agent类型：只暴露白名单中明确出现的工具，不自动包含所有核心工具。
+     */
+    public List<ToolSpecification> getExactSpecificationsForToolNames(Set<String> toolNames, Set<String> excludedTools) {
+        if (toolNames == null || toolNames.isEmpty()) {
+            return List.of();
+        }
+
+        List<ToolSpecification> specs = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (String name : toolNames) {
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            if (excludedTools != null && excludedTools.contains(name)) {
+                continue;
+            }
+            if (!seen.add(name)) {
+                continue;
+            }
+            ToolSpecification spec = toolSpecifications.get(name);
+            if (spec != null) {
+                specs.add(spec);
+            }
+        }
+
+        return specs;
+    }
+
+    /**
      * 获取核心工具实例列表
      *
      * 只返回标注了 @CoreTool 的工具实例，用于 ToolPromptCollector 收集 prompt

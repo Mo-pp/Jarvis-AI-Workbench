@@ -13,9 +13,9 @@
 # 修改此文件后，调用 /api/claude/debug/hooks/reload 可热加载，无需重启应用。
 
 pre_tool_use:
-  # 子Agent模式阻断：拦截 askUserQuestion / askMultipleQuestions / spawnAgent
+  # 子Agent模式阻断：拦截 askUserQuestion / askMultipleQuestions / askQuestionnaire / spawnAgent
   - name: sub_agent_block
-    matcher: "^(askUserQuestion|askMultipleQuestions|spawnAgent)$"
+    matcher: "^(askUserQuestion|askMultipleQuestions|askQuestionnaire|spawnAgent)$"
     action: subAgentBlockHook
     priority: 10
 

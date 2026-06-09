@@ -9,12 +9,13 @@ package com.msz.resume.ai.chat.runtime.subagent;
  * <h2>状态说明</h2>
  * <ul>
  *   <li><b>success</b>: 子Agent正常完成任务，摘要中包含结果</li>
+ *   <li><b>wrapped_up</b>: 子Agent达到探索轮次限制后完成强制收束，摘要中包含最终结果</li>
  *   <li><b>max_turns_exceeded</b>: 子Agent达到最大轮次限制，摘要中包含当前进展</li>
  *   <li><b>error</b>: 子Agent执行异常，摘要中包含错误信息</li>
  * </ul>
  */
 public record SubAgentResult(
-        /** 执行状态：success / max_turns_exceeded / error */
+        /** 执行状态：success / wrapped_up / max_turns_exceeded / error */
         String status,
         /** 实际执行的轮次 */
         int turnCount,
@@ -33,6 +34,14 @@ public record SubAgentResult(
     public static SubAgentResult success(String summary, int turnCount, int maxTurns,
                                            int inputTokens, int outputTokens) {
         return new SubAgentResult("success", turnCount, maxTurns, summary, inputTokens, outputTokens);
+    }
+
+    /**
+     * 创建强制收束结果
+     */
+    public static SubAgentResult wrappedUp(String summary, int turnCount, int maxTurns,
+                                           int inputTokens, int outputTokens) {
+        return new SubAgentResult("wrapped_up", turnCount, maxTurns, summary, inputTokens, outputTokens);
     }
 
     /**
@@ -56,6 +65,13 @@ public record SubAgentResult(
      */
     public boolean isSuccess() {
         return "success".equals(status);
+    }
+
+    /**
+     * 是否完成强制收束
+     */
+    public boolean isWrappedUp() {
+        return "wrapped_up".equals(status);
     }
 
     /**

@@ -35,6 +35,7 @@ jarvis-frontend/dist-ssr/
 .vscode/
 .claude/
 .codex/
+.codex_tmp/
 .trae/
 .mcp.json
 

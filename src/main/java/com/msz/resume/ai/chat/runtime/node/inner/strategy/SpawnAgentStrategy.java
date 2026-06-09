@@ -42,6 +42,8 @@ import java.util.concurrent.CompletableFuture;
 public class SpawnAgentStrategy implements ToolExecutionStrategy {
 
     private static final String TOOL_NAME = "spawnAgent";
+    private static final int DEFAULT_MAX_TURNS = 30;
+    private static final int RESUME_BUSINESS_EXPLORE_DEFAULT_MAX_TURNS = 50;
 
     private final NormalToolStrategy normalToolStrategy;
     private final SubGraphNode subGraphNode;
@@ -270,12 +272,11 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
             if (subagentTypeStr == null) {
                 subagentTypeStr = args.has("agentType") ? args.get("agentType").asText() : "General";
             }
-            SubAgentType subagentType;
-            try {
-                subagentType = SubAgentType.valueOf(subagentTypeStr.toUpperCase());
-            } catch (IllegalArgumentException e) {
+            SubAgentType subagentType = SubAgentType.fromName(subagentTypeStr);
+            if (subagentType == SubAgentType.General
+                    && subagentTypeStr != null
+                    && !SubAgentType.General.name().equalsIgnoreCase(subagentTypeStr.trim())) {
                 log.warn("[SpawnAgentStrategy] 无效的 subagentType: {}, 使用默认值 General", subagentTypeStr);
-                subagentType = SubAgentType.General;
             }
 
             // 解析 allowedTools 参数（仅 General 类型使用）
@@ -297,9 +298,9 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
             }
             // Plan/Explore 类型：permittedTools 保持空，由 SubAgentTypeRegistry 解析
 
-            int maxTurns = args.has("maxTurns") ? args.get("maxTurns").asInt() : 30;
+            int maxTurns = args.has("maxTurns") ? args.get("maxTurns").asInt() : defaultMaxTurns(subagentType);
             if (maxTurns <= 0) {
-                maxTurns = 30; // 默认值
+                maxTurns = defaultMaxTurns(subagentType);
             }
 
             log.info("[SpawnAgentStrategy] spawnAgent 参数: prompt={}, subagentType={}, tools={}, maxTurns={}",
@@ -312,6 +313,13 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
             log.error("[SpawnAgentStrategy] 解析 spawnAgent 参数失败", e);
             return null;
         }
+    }
+
+    private int defaultMaxTurns(SubAgentType subagentType) {
+        if (subagentType == SubAgentType.ResumeBusinessExplore) {
+            return RESUME_BUSINESS_EXPLORE_DEFAULT_MAX_TURNS;
+        }
+        return DEFAULT_MAX_TURNS;
     }
 
     /** 启动单个子 Agent 子图，并把最终结果包装回工具返回消息。 */
@@ -363,6 +371,7 @@ public class SpawnAgentStrategy implements ToolExecutionStrategy {
         sb.append("任务：").append(prompt).append("\n");
         sb.append("状态：").append(switch (result.status()) {
             case "success" -> "成功";
+            case "wrapped_up" -> "已达到探索轮次限制并完成强制收束";
             case "max_turns_exceeded" -> "超时（达到最大轮次限制）";
             case "error" -> "失败";
             default -> result.status();

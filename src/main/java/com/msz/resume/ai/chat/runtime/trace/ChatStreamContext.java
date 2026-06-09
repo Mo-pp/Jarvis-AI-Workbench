@@ -1,6 +1,8 @@
 package com.msz.resume.ai.chat.runtime.trace;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -110,5 +112,34 @@ public final class ChatStreamContext {
                 "status", status != null && !status.isBlank() ? status : "success",
                 "summaryAvailable", false
         ));
+    }
+
+    /** 实时同步主 Agent 的内部任务计划，供前端底部任务栏展示完整详情。 */
+    public static void sendTaskUpdate(String sessionId, List<Map<String, Object>> taskPlan) throws IOException {
+        ChatStreamEventSink sink = SINKS.get(sessionId);
+        if (sink == null || sink.isClosed() || taskPlan == null) {
+            return;
+        }
+        sink.send("task_update", Map.of(
+                "taskPlan", taskPlan,
+                "taskProgress", buildTaskProgress(taskPlan)
+        ));
+    }
+
+    private static Map<String, Integer> buildTaskProgress(List<Map<String, Object>> taskPlan) {
+        Map<String, Integer> progress = new HashMap<>();
+        progress.put("total", taskPlan != null ? taskPlan.size() : 0);
+        progress.put("pending", 0);
+        progress.put("in_progress", 0);
+        progress.put("completed", 0);
+        progress.put("skipped", 0);
+
+        if (taskPlan != null) {
+            for (Map<String, Object> task : taskPlan) {
+                String status = String.valueOf(task.getOrDefault("status", "pending"));
+                progress.merge(status, 1, Integer::sum);
+            }
+        }
+        return progress;
     }
 }
