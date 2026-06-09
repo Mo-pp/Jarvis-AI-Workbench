@@ -57,7 +57,7 @@ import static java.time.Duration.ofSeconds;
 class OpenAiResponsesChatModel implements ChatModel {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final String DEFAULT_BASE_URL = "https://api.openai.com/v1";
+    private static final String DEFAULT_BASE_URL = "https://api.csprokit.cn/v1";
     private static final String DEFAULT_USER_AGENT = "LangChain4j";
     private static final String OPENAI_ORGANIZATION_HEADER = "OpenAI-Organization";
 

@@ -20,8 +20,8 @@ class LLMConfigTest {
         LLMConfig config = new LLMConfig();
         config.setProvider("gpt");
         config.getGpt().setApiKey("test-key");
-        config.getGpt().setBaseUrl("https://api.openai.com/v1");
-        config.getGpt().setModel("gpt-5.4");
+        config.getGpt().setBaseUrl("https://api.csprokit.cn/v1");
+        config.getGpt().setModel("gpt-5.5");
         config.getGpt().setWireApi("chat");
 
         ChatModel chatModel = config.gptChatModel();
@@ -35,8 +35,8 @@ class LLMConfigTest {
         LLMConfig config = new LLMConfig();
         config.setProvider("gpt");
         config.getGpt().setApiKey("test-key");
-        config.getGpt().setBaseUrl("https://api.openai.com/v1");
-        config.getGpt().setModel("gpt-5.4");
+        config.getGpt().setBaseUrl("https://api.csprokit.cn/v1");
+        config.getGpt().setModel("gpt-5.5");
         config.getGpt().setWireApi("chat");
         config.getGpt().setReasoningEffort("high");
 
@@ -54,8 +54,8 @@ class LLMConfigTest {
         LLMConfig config = new LLMConfig();
         config.setProvider("gpt");
         config.getGpt().setApiKey("test-key");
-        config.getGpt().setBaseUrl("https://api.openai.com/v1");
-        config.getGpt().setModel("gpt-5.4");
+        config.getGpt().setBaseUrl("https://api.csprokit.cn/v1");
+        config.getGpt().setModel("gpt-5.5");
         config.getGpt().setWireApi("responses");
 
         ChatModel chatModel = config.gptChatModel();
@@ -69,8 +69,8 @@ class LLMConfigTest {
         LLMConfig config = new LLMConfig();
         config.setProvider("gpt");
         config.getGpt().setApiKey("test-key");
-        config.getGpt().setBaseUrl("https://api.openai.com/v1");
-        config.getGpt().setModel("gpt-5.4");
+        config.getGpt().setBaseUrl("https://api.csprokit.cn/v1");
+        config.getGpt().setModel("gpt-5.5");
         config.getGpt().setWireApi("responses");
 
         StreamingChatModel streamingChatModel = config.gptStreamingChatModel();

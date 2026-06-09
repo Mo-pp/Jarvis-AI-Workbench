@@ -46,7 +46,7 @@ import java.util.Set;
  *       model: qwen-max
  *     gpt:
  *       api-key: ${OPENAI_API_KEY:}
- *       model: gpt-5.4
+ *       model: gpt-5.5
  * </pre>
  *
  * <p>注意：当 provider=dashscope 时，使用 langchain4j-community-dashscope-spring-boot-starter
@@ -112,10 +112,10 @@ public class LLMConfig {
         private String apiKey;
 
         /** 模型名称 */
-        private String model = "gpt-5.4";
+        private String model = "gpt-5.5";
 
         /** API 基础地址 */
-        private String baseUrl = "https://api.openai.com/v1";
+        private String baseUrl = "https://api.csprokit.cn/v1";
 
         /** 线协议：chat 或 responses */
         private String wireApi = "chat";
